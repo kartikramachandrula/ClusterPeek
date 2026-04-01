@@ -682,10 +682,15 @@ function buildStatusHTML(name, status, jobs) {
 
   let html = '';
 
-  // GPU cards
-  if (Object.keys(gpuSummary).length > 0) {
+  // GPU cards — only show high-priority GPU types
+  const GPU_ALLOWLIST = new Set(['l40s', 'h100', 'h200', 'a100']);
+  const filteredGpu = Object.fromEntries(
+    Object.entries(gpuSummary).filter(([t]) => GPU_ALLOWLIST.has(t.toLowerCase()))
+  );
+
+  if (Object.keys(filteredGpu).length > 0) {
     html += `<div class="section-label">GPU Resources</div><div class="gpu-grid">`;
-    for (const [type, info] of Object.entries(gpuSummary)) {
+    for (const [type, info] of Object.entries(filteredGpu)) {
       const pct = info.total > 0 ? Math.round((info.used / info.total) * 100) : 0;
       const freePct = 100 - pct;
       html += `
@@ -708,7 +713,7 @@ function buildStatusHTML(name, status, jobs) {
     html += '</div>';
   } else {
     html += `<div class="section-label" style="margin-bottom:16px;">GPU Resources</div>
-      <p style="color:var(--muted);font-size:13px;margin-bottom:24px;">No GPU nodes found.</p>`;
+      <p style="color:var(--muted);font-size:13px;margin-bottom:24px;">No L40S / H100 / H200 / A100 nodes found.</p>`;
   }
 
   // Partition summary
