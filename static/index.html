@@ -741,16 +741,18 @@ function buildStatusHTML(name, status, jobs) {
     html += '</div>';
   }
 
-  // Node table
-  if (nodes.length > 0) {
-    const gpuTypes = [...new Set(nodes.map(n => n.gpu_type).filter(t => t !== 'none'))];
-    const parts    = [...new Set(nodes.flatMap(n => n.partitions))].sort();
-    const states   = [...new Set(nodes.map(n => n.state))].sort();
+  // Node table — only show nodes with a tracked GPU type
+  const gpuNodes = nodes.filter(n => GPU_ALLOWLIST.has((n.gpu_type || '').toLowerCase()));
+
+  if (gpuNodes.length > 0) {
+    const gpuTypes = [...new Set(gpuNodes.map(n => n.gpu_type).filter(t => t !== 'none'))];
+    const parts    = [...new Set(gpuNodes.flatMap(n => n.partitions))].sort();
+    const states   = [...new Set(gpuNodes.map(n => n.state))].sort();
 
     html += `
       <div class="node-table-wrap">
         <div class="node-table-header">
-          <span class="node-table-title">Node Details <span style="color:var(--muted);font-weight:400;">(${nodes.length} nodes)</span></span>
+          <span class="node-table-title">Node Details <span style="color:var(--muted);font-weight:400;">(${gpuNodes.length} nodes)</span></span>
           <div class="filter-row">
             <select class="filter-select" id="filter-state-${name}" onchange="applyFilter('${name}')">
               <option value="">All states</option>
@@ -780,7 +782,7 @@ function buildStatusHTML(name, status, jobs) {
               </tr>
             </thead>
             <tbody id="node-tbody-${name}">
-              ${buildNodeRows(nodes)}
+              ${buildNodeRows(gpuNodes)}
             </tbody>
           </table>
         </div>
