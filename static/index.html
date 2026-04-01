@@ -1,0 +1,833 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ClusterPeek</title>
+  <style>
+    /* ── Reset & base ───────────────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:        #0d1117;
+      --surface:   #161b22;
+      --surface2:  #1c2330;
+      --border:    #30363d;
+      --text:      #c9d1d9;
+      --muted:     #6e7681;
+      --accent:    #58a6ff;
+
+      --green:     #3fb950;
+      --yellow:    #d29922;
+      --red:       #f85149;
+      --orange:    #e3a34a;
+      --purple:    #bc8cff;
+      --cyan:      #39c5cf;
+
+      /* GPU type colors */
+      --gpu-a100:  #58a6ff;
+      --gpu-h100:  #3fb950;
+      --gpu-h200:  #bc8cff;
+      --gpu-l40s:  #e3a34a;
+      --gpu-rtx6000: #39c5cf;
+      --gpu-default: #6e7681;
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, monospace;
+      font-size: 14px;
+      line-height: 1.5;
+      min-height: 100vh;
+    }
+
+    /* ── Layout ─────────────────────────────────────────────────────── */
+    header {
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      padding: 0 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      height: 56px;
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+
+    .logo {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 18px;
+      font-weight: 700;
+      color: var(--accent);
+      letter-spacing: -0.3px;
+    }
+    .logo svg { opacity: 0.9; }
+
+    .header-right {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    #last-updated { color: var(--muted); }
+
+    .btn {
+      padding: 6px 14px;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      background: var(--surface2);
+      color: var(--text);
+      cursor: pointer;
+      font-size: 12px;
+      font-family: inherit;
+      transition: background 0.15s, border-color 0.15s;
+    }
+    .btn:hover { background: var(--border); }
+    .btn.primary {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: #0d1117;
+      font-weight: 600;
+    }
+    .btn.primary:hover { background: #79b8ff; }
+    .btn.danger { border-color: var(--red); color: var(--red); }
+    .btn.danger:hover { background: rgba(248,81,73,0.1); }
+
+    main {
+      padding: 28px 24px;
+      max-width: 1400px;
+      margin: 0 auto;
+    }
+
+    /* ── Cluster section ────────────────────────────────────────────── */
+    .cluster-block {
+      margin-bottom: 40px;
+    }
+
+    .cluster-header {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 20px;
+      flex-wrap: wrap;
+    }
+
+    .cluster-title {
+      font-size: 20px;
+      font-weight: 700;
+      color: var(--text);
+    }
+
+    .cluster-host {
+      color: var(--muted);
+      font-size: 13px;
+      font-family: monospace;
+    }
+
+    .status-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+    .status-dot.connected    { background: var(--green); box-shadow: 0 0 6px var(--green); }
+    .status-dot.disconnected { background: var(--red); }
+    .status-dot.loading      { background: var(--yellow); animation: pulse 1s infinite; }
+
+    @keyframes pulse { 0%,100% { opacity:1 } 50% { opacity:0.4 } }
+
+    /* ── Connect banner ─────────────────────────────────────────────── */
+    .connect-banner {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-left: 3px solid var(--yellow);
+      border-radius: 8px;
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    .connect-banner h3 { font-size: 14px; color: var(--yellow); }
+    .connect-banner p  { color: var(--muted); font-size: 13px; }
+
+    .code-block {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 12px 16px;
+      font-family: monospace;
+      font-size: 13px;
+      color: var(--cyan);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    .code-block code { flex: 1; word-break: break-all; }
+
+    .copy-btn {
+      padding: 4px 10px;
+      font-size: 11px;
+      flex-shrink: 0;
+    }
+
+    /* ── GPU summary cards ──────────────────────────────────────────── */
+    .section-label {
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
+      color: var(--muted);
+      margin-bottom: 12px;
+    }
+
+    .gpu-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+      gap: 14px;
+      margin-bottom: 28px;
+    }
+
+    .gpu-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 18px;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .gpu-card::before {
+      content: '';
+      position: absolute;
+      top: 0; left: 0; right: 0;
+      height: 3px;
+      border-radius: 10px 10px 0 0;
+    }
+
+    .gpu-card[data-type="a100"]::before   { background: var(--gpu-a100); }
+    .gpu-card[data-type="h100"]::before   { background: var(--gpu-h100); }
+    .gpu-card[data-type="h200"]::before   { background: var(--gpu-h200); }
+    .gpu-card[data-type="l40s"]::before   { background: var(--gpu-l40s); }
+    .gpu-card[data-type="rtx6000"]::before { background: var(--gpu-rtx6000); }
+    .gpu-card[data-type="gpu"]::before    { background: var(--gpu-default); }
+
+    .gpu-name {
+      font-size: 16px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 4px;
+    }
+    .gpu-card[data-type="a100"]   .gpu-name { color: var(--gpu-a100); }
+    .gpu-card[data-type="h100"]   .gpu-name { color: var(--gpu-h100); }
+    .gpu-card[data-type="h200"]   .gpu-name { color: var(--gpu-h200); }
+    .gpu-card[data-type="l40s"]   .gpu-name { color: var(--gpu-l40s); }
+    .gpu-card[data-type="rtx6000"] .gpu-name { color: var(--gpu-rtx6000); }
+    .gpu-card[data-type="gpu"]    .gpu-name { color: var(--gpu-default); }
+
+    .gpu-node-count {
+      font-size: 11px;
+      color: var(--muted);
+      margin-bottom: 14px;
+    }
+
+    .gpu-numbers {
+      display: flex;
+      align-items: baseline;
+      gap: 6px;
+      margin-bottom: 10px;
+    }
+    .gpu-free-count {
+      font-size: 32px;
+      font-weight: 700;
+      line-height: 1;
+      color: var(--text);
+    }
+    .gpu-total-count {
+      font-size: 14px;
+      color: var(--muted);
+    }
+
+    .usage-bar-wrap {
+      background: var(--bg);
+      border-radius: 4px;
+      height: 6px;
+      overflow: hidden;
+      margin-bottom: 8px;
+    }
+    .usage-bar-fill {
+      height: 100%;
+      border-radius: 4px;
+      transition: width 0.4s ease;
+    }
+    .gpu-card[data-type="a100"]   .usage-bar-fill { background: var(--gpu-a100); }
+    .gpu-card[data-type="h100"]   .usage-bar-fill { background: var(--gpu-h100); }
+    .gpu-card[data-type="h200"]   .usage-bar-fill { background: var(--gpu-h200); }
+    .gpu-card[data-type="l40s"]   .usage-bar-fill { background: var(--gpu-l40s); }
+    .gpu-card[data-type="rtx6000"] .usage-bar-fill { background: var(--gpu-rtx6000); }
+    .gpu-card[data-type="gpu"]    .usage-bar-fill { background: var(--gpu-default); }
+
+    .gpu-usage-text {
+      font-size: 11px;
+      color: var(--muted);
+      display: flex;
+      justify-content: space-between;
+    }
+
+    /* ── Node table ─────────────────────────────────────────────────── */
+    .node-table-wrap {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      overflow: hidden;
+      margin-bottom: 28px;
+    }
+
+    .node-table-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 14px 18px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .node-table-title { font-weight: 600; font-size: 13px; }
+
+    .filter-row {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+
+    .filter-select {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--text);
+      font-size: 12px;
+      font-family: inherit;
+      padding: 4px 8px;
+      cursor: pointer;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+
+    thead th {
+      background: var(--surface2);
+      color: var(--muted);
+      font-weight: 600;
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.6px;
+      padding: 10px 16px;
+      text-align: left;
+      white-space: nowrap;
+      border-bottom: 1px solid var(--border);
+    }
+
+    tbody tr {
+      border-bottom: 1px solid var(--border);
+      transition: background 0.1s;
+    }
+    tbody tr:last-child { border-bottom: none; }
+    tbody tr:hover { background: var(--surface2); }
+
+    td {
+      padding: 10px 16px;
+      color: var(--text);
+      font-family: monospace;
+      font-size: 12px;
+      white-space: nowrap;
+    }
+
+    /* State badges */
+    .state-badge {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-size: 11px;
+      font-weight: 600;
+      font-family: monospace;
+    }
+    .state-IDLE      { background: rgba(63,185,80,0.15);  color: var(--green); }
+    .state-ALLOCATED { background: rgba(248,81,73,0.15);  color: var(--red); }
+    .state-MIXED     { background: rgba(210,153,34,0.15); color: var(--yellow); }
+    .state-DOWN      { background: rgba(110,118,129,0.15);color: var(--muted); }
+    .state-DRAIN     { background: rgba(227,163,74,0.15); color: var(--orange); }
+    .state-DRAINING  { background: rgba(227,163,74,0.15); color: var(--orange); }
+    .state-DRAINED   { background: rgba(110,118,129,0.15);color: var(--muted); }
+    .state-OTHER     { background: rgba(110,118,129,0.15);color: var(--muted); }
+
+    /* Mini bar */
+    .mini-bar-wrap {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .mini-bar {
+      flex: 1;
+      background: var(--bg);
+      border-radius: 3px;
+      height: 5px;
+      min-width: 60px;
+      overflow: hidden;
+    }
+    .mini-bar-fill {
+      height: 100%;
+      border-radius: 3px;
+      background: var(--accent);
+    }
+    .mini-label { min-width: 50px; color: var(--muted); font-size: 11px; }
+
+    /* ── Partition summary ──────────────────────────────────────────── */
+    .partition-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+      gap: 12px;
+      margin-bottom: 28px;
+    }
+
+    .partition-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 14px 16px;
+    }
+
+    .partition-name {
+      font-weight: 600;
+      font-size: 13px;
+      color: var(--accent);
+      margin-bottom: 8px;
+      font-family: monospace;
+    }
+
+    .partition-stats {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 6px;
+    }
+
+    .p-stat { font-size: 12px; color: var(--muted); }
+    .p-stat span { color: var(--text); font-weight: 600; }
+
+    /* ── Error / loading states ─────────────────────────────────────── */
+    .error-box {
+      background: rgba(248,81,73,0.1);
+      border: 1px solid rgba(248,81,73,0.3);
+      border-radius: 8px;
+      padding: 16px;
+      color: var(--red);
+      font-size: 13px;
+    }
+
+    .loading-box {
+      padding: 40px;
+      text-align: center;
+      color: var(--muted);
+    }
+    .spinner {
+      width: 28px;
+      height: 28px;
+      border: 3px solid var(--border);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+      margin: 0 auto 12px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ── Divider ────────────────────────────────────────────────────── */
+    .divider {
+      border: none;
+      border-top: 1px solid var(--border);
+      margin: 32px 0;
+    }
+
+    /* ── Auto-refresh toggle ────────────────────────────────────────── */
+    .toggle-wrap {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 12px;
+      color: var(--muted);
+      cursor: pointer;
+      user-select: none;
+    }
+    .toggle {
+      width: 34px;
+      height: 18px;
+      background: var(--border);
+      border-radius: 9px;
+      position: relative;
+      transition: background 0.2s;
+    }
+    .toggle.on { background: var(--green); }
+    .toggle::after {
+      content: '';
+      position: absolute;
+      width: 14px;
+      height: 14px;
+      background: #fff;
+      border-radius: 50%;
+      top: 2px;
+      left: 2px;
+      transition: transform 0.2s;
+    }
+    .toggle.on::after { transform: translateX(16px); }
+
+    /* ── Tooltip ────────────────────────────────────────────────────── */
+    [title] { cursor: help; }
+
+    /* ── Scrollable table ───────────────────────────────────────────── */
+    .table-scroll {
+      max-height: 420px;
+      overflow-y: auto;
+    }
+
+    .table-scroll::-webkit-scrollbar { width: 6px; }
+    .table-scroll::-webkit-scrollbar-track { background: transparent; }
+    .table-scroll::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+  </style>
+</head>
+<body>
+
+<header>
+  <div class="logo">
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/>
+    </svg>
+    ClusterPeek
+  </div>
+  <div class="header-right">
+    <label class="toggle-wrap" id="auto-refresh-label">
+      <div class="toggle on" id="auto-refresh-toggle"></div>
+      Auto-refresh (60s)
+    </label>
+    <span id="last-updated">—</span>
+    <button class="btn" onclick="refreshAll()">Refresh now</button>
+  </div>
+</header>
+
+<main id="main">
+  <div class="loading-box">
+    <div class="spinner"></div>
+    Loading clusters…
+  </div>
+</main>
+
+<script>
+// ── State ──────────────────────────────────────────────────────────────────
+let clusters = {};
+let statusCache = {};
+let autoRefresh = true;
+let refreshTimer = null;
+const REFRESH_INTERVAL = 60_000;
+
+// ── Boot ───────────────────────────────────────────────────────────────────
+(async function init() {
+  setupToggle();
+  await refreshAll();
+})();
+
+// ── Toggle ─────────────────────────────────────────────────────────────────
+function setupToggle() {
+  const label = document.getElementById('auto-refresh-label');
+  label.addEventListener('click', () => {
+    autoRefresh = !autoRefresh;
+    document.getElementById('auto-refresh-toggle').classList.toggle('on', autoRefresh);
+    if (autoRefresh) scheduleRefresh();
+    else clearTimeout(refreshTimer);
+  });
+}
+
+function scheduleRefresh() {
+  clearTimeout(refreshTimer);
+  if (autoRefresh) refreshTimer = setTimeout(refreshAll, REFRESH_INTERVAL);
+}
+
+// ── Main refresh ───────────────────────────────────────────────────────────
+async function refreshAll() {
+  try {
+    const res = await fetch('/api/clusters');
+    clusters = await res.json();
+  } catch (e) {
+    document.getElementById('main').innerHTML =
+      `<div class="error-box">Cannot reach ClusterPeek backend: ${e.message}</div>`;
+    return;
+  }
+
+  // Fetch status for all clusters in parallel
+  const fetches = Object.keys(clusters).map(name =>
+    fetch(`/api/clusters/${name}/status`)
+      .then(r => r.json())
+      .then(data => { statusCache[name] = data; })
+      .catch(e => { statusCache[name] = { connected: false, error: String(e) }; })
+  );
+  await Promise.all(fetches);
+
+  render();
+  document.getElementById('last-updated').textContent =
+    'Updated ' + new Date().toLocaleTimeString();
+  scheduleRefresh();
+}
+
+async function refreshCluster(name) {
+  try {
+    const res = await fetch(`/api/clusters/${name}/status`);
+    statusCache[name] = await res.json();
+  } catch (e) {
+    statusCache[name] = { connected: false, error: String(e) };
+  }
+  renderCluster(name);
+  document.getElementById('last-updated').textContent =
+    'Updated ' + new Date().toLocaleTimeString();
+}
+
+// ── Rendering ──────────────────────────────────────────────────────────────
+function render() {
+  const main = document.getElementById('main');
+  if (Object.keys(clusters).length === 0) {
+    main.innerHTML = '<div class="error-box">No clusters configured in clusters.yaml</div>';
+    return;
+  }
+  main.innerHTML = Object.keys(clusters)
+    .map(name => `<div class="cluster-block" id="cluster-${name}"></div>`)
+    .join('<hr class="divider">');
+  Object.keys(clusters).forEach(name => renderCluster(name));
+}
+
+function renderCluster(name) {
+  const el = document.getElementById(`cluster-${name}`);
+  if (!el) return;
+  const meta = clusters[name];
+  const status = statusCache[name] || {};
+  el.innerHTML = buildClusterHTML(name, meta, status);
+}
+
+function buildClusterHTML(name, meta, status) {
+  const connected = status.connected;
+  const dotClass = connected ? 'connected' : 'disconnected';
+
+  let body = '';
+
+  if (!connected) {
+    const cmd = meta.connect_cmd || status.connect_cmd || '(see clusters.yaml)';
+    body = `
+      <div class="connect-banner">
+        <h3>Not connected</h3>
+        <p>${meta.notes || 'Establish a ControlMaster session to query this cluster.'}</p>
+        <p>Run this command in your terminal (authenticate once with Duo / Kerberos):</p>
+        <div class="code-block">
+          <code id="cmd-${name}">${escHtml(cmd)}</code>
+          <button class="btn copy-btn" onclick="copyCmd('${name}')">Copy</button>
+        </div>
+        <p style="color:var(--muted);font-size:12px;">
+          The <code style="color:var(--cyan)">-N -f</code> flags keep the tunnel open in the background.
+          Come back here and hit Refresh after authenticating.
+        </p>
+      </div>`;
+  } else if (status.error) {
+    body = `<div class="error-box">${escHtml(status.error)}</div>`;
+  } else {
+    body = buildStatusHTML(name, status);
+  }
+
+  return `
+    <div class="cluster-header">
+      <div class="status-dot ${dotClass}" title="${connected ? 'Connected' : 'Disconnected'}"></div>
+      <div class="cluster-title">${escHtml(meta.label || name)}</div>
+      <div class="cluster-host">${escHtml(meta.user ? meta.user + '@' : '')}${escHtml(meta.host)}</div>
+      <div style="margin-left:auto;display:flex;gap:8px;">
+        <button class="btn" onclick="refreshCluster('${name}')">↻ Refresh</button>
+        ${connected ? `<button class="btn danger" onclick="disconnect('${name}')">Disconnect</button>` : ''}
+      </div>
+    </div>
+    ${body}`;
+}
+
+function buildStatusHTML(name, status) {
+  const gpuSummary = status.gpu_summary || {};
+  const partitions = status.partition_summary || {};
+  const nodes = status.nodes || [];
+
+  let html = '';
+
+  // GPU cards
+  if (Object.keys(gpuSummary).length > 0) {
+    html += `<div class="section-label">GPU Resources</div><div class="gpu-grid">`;
+    for (const [type, info] of Object.entries(gpuSummary)) {
+      const pct = info.total > 0 ? Math.round((info.used / info.total) * 100) : 0;
+      const freePct = 100 - pct;
+      html += `
+        <div class="gpu-card" data-type="${escHtml(type)}">
+          <div class="gpu-name">${escHtml(type.toUpperCase())}</div>
+          <div class="gpu-node-count">${info.node_count} node${info.node_count !== 1 ? 's' : ''}</div>
+          <div class="gpu-numbers">
+            <span class="gpu-free-count">${info.free}</span>
+            <span class="gpu-total-count">/ ${info.total} free</span>
+          </div>
+          <div class="usage-bar-wrap">
+            <div class="usage-bar-fill" style="width:${pct}%"></div>
+          </div>
+          <div class="gpu-usage-text">
+            <span>${info.used} in use</span>
+            <span>${pct}% utilized</span>
+          </div>
+        </div>`;
+    }
+    html += '</div>';
+  } else {
+    html += `<div class="section-label" style="margin-bottom:16px;">GPU Resources</div>
+      <p style="color:var(--muted);font-size:13px;margin-bottom:24px;">No GPU nodes found in scontrol output.</p>`;
+  }
+
+  // Partition summary
+  if (Object.keys(partitions).length > 0) {
+    html += `<div class="section-label">Partitions</div><div class="partition-grid">`;
+    for (const [pname, pinfo] of Object.entries(partitions)) {
+      const stateStr = Object.entries(pinfo.states)
+        .map(([s,c]) => `${c}×${s}`)
+        .join(', ');
+      html += `
+        <div class="partition-card">
+          <div class="partition-name">${escHtml(pname)}</div>
+          <div class="partition-stats">
+            <div class="p-stat">Nodes <span>${pinfo.node_count}</span></div>
+            <div class="p-stat">GPUs free <span>${pinfo.gpu_free}/${pinfo.gpu_total}</span></div>
+            <div class="p-stat">CPUs idle <span>${pinfo.cpu_idle}/${pinfo.cpu_total}</span></div>
+            <div class="p-stat" style="grid-column:span 2;font-size:11px;">${escHtml(stateStr)}</div>
+          </div>
+        </div>`;
+    }
+    html += '</div>';
+  }
+
+  // Node table
+  if (nodes.length > 0) {
+    const gpuTypes = [...new Set(nodes.map(n => n.gpu_type).filter(t => t !== 'none'))];
+    const parts    = [...new Set(nodes.flatMap(n => n.partitions))].sort();
+    const states   = [...new Set(nodes.map(n => n.state))].sort();
+
+    html += `
+      <div class="node-table-wrap">
+        <div class="node-table-header">
+          <span class="node-table-title">Node Details <span style="color:var(--muted);font-weight:400;">(${nodes.length} nodes)</span></span>
+          <div class="filter-row">
+            <select class="filter-select" id="filter-state-${name}" onchange="applyFilter('${name}')">
+              <option value="">All states</option>
+              ${states.map(s => `<option value="${escHtml(s)}">${escHtml(s)}</option>`).join('')}
+            </select>
+            <select class="filter-select" id="filter-gpu-${name}" onchange="applyFilter('${name}')">
+              <option value="">All GPU types</option>
+              ${gpuTypes.map(g => `<option value="${escHtml(g)}">${escHtml(g.toUpperCase())}</option>`).join('')}
+            </select>
+            <select class="filter-select" id="filter-part-${name}" onchange="applyFilter('${name}')">
+              <option value="">All partitions</option>
+              ${parts.map(p => `<option value="${escHtml(p)}">${escHtml(p)}</option>`).join('')}
+            </select>
+          </div>
+        </div>
+        <div class="table-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>Node</th>
+                <th>State</th>
+                <th>GPU Type</th>
+                <th>GPUs Free</th>
+                <th>CPU Usage</th>
+                <th>Partitions</th>
+              </tr>
+            </thead>
+            <tbody id="node-tbody-${name}">
+              ${buildNodeRows(nodes)}
+            </tbody>
+          </table>
+        </div>
+      </div>`;
+  }
+
+  return html;
+}
+
+function buildNodeRows(nodes) {
+  return nodes.map(n => {
+    const stateClass = `state-${n.state}`;
+    const gpuStr = n.gpu_total > 0
+      ? `${n.gpu_free} / ${n.gpu_total}`
+      : '<span style="color:var(--muted)">—</span>';
+    const cpuPct = n.cpu_total > 0 ? Math.round((n.cpu_alloc / n.cpu_total) * 100) : 0;
+    const partStr = n.partitions.join(', ');
+
+    return `<tr
+      data-state="${escHtml(n.state)}"
+      data-gpu="${escHtml(n.gpu_type)}"
+      data-partitions="${escHtml(partStr)}">
+      <td>${escHtml(n.name)}</td>
+      <td><span class="state-badge ${stateClass}">${escHtml(n.state)}</span></td>
+      <td>${n.gpu_type !== 'none' ? escHtml(n.gpu_type.toUpperCase()) : '<span style="color:var(--muted)">—</span>'}</td>
+      <td>${gpuStr}</td>
+      <td>
+        <div class="mini-bar-wrap">
+          <div class="mini-bar"><div class="mini-bar-fill" style="width:${cpuPct}%"></div></div>
+          <span class="mini-label">${n.cpu_alloc}/${n.cpu_total}</span>
+        </div>
+      </td>
+      <td style="color:var(--muted);font-size:11px;">${escHtml(partStr)}</td>
+    </tr>`;
+  }).join('');
+}
+
+function applyFilter(name) {
+  const stateFilter = document.getElementById(`filter-state-${name}`)?.value || '';
+  const gpuFilter   = document.getElementById(`filter-gpu-${name}`)?.value || '';
+  const partFilter  = document.getElementById(`filter-part-${name}`)?.value || '';
+
+  const tbody = document.getElementById(`node-tbody-${name}`);
+  if (!tbody) return;
+
+  [...tbody.rows].forEach(row => {
+    const stateOk = !stateFilter || row.dataset.state === stateFilter;
+    const gpuOk   = !gpuFilter   || row.dataset.gpu === gpuFilter;
+    const partOk  = !partFilter  || row.dataset.partitions.split(', ').includes(partFilter);
+    row.style.display = stateOk && gpuOk && partOk ? '' : 'none';
+  });
+}
+
+// ── Actions ────────────────────────────────────────────────────────────────
+async function disconnect(name) {
+  if (!confirm(`Disconnect from ${clusters[name]?.label || name}?`)) return;
+  await fetch(`/api/clusters/${name}/disconnect`);
+  await refreshCluster(name);
+}
+
+function copyCmd(name) {
+  const el = document.getElementById(`cmd-${name}`);
+  if (!el) return;
+  navigator.clipboard.writeText(el.textContent).then(() => {
+    const btn = el.nextElementSibling;
+    if (btn) { btn.textContent = 'Copied!'; setTimeout(() => btn.textContent = 'Copy', 1500); }
+  });
+}
+
+// ── Utilities ──────────────────────────────────────────────────────────────
+function escHtml(s) {
+  return String(s ?? '')
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+    .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+</script>
+</body>
+</html>

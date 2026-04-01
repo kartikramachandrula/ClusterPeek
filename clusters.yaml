@@ -1,0 +1,8 @@
+clusters:
+  engaging:
+    label: "ORCD Engaging (MIT)"
+    host: orcd-login.mit.edu
+    user: "k_rama"            # fill in your MIT username
+    control_path: "~/.ssh/control-engaging"
+    scheduler: slurm
+    notes: "Kerberos + Duo 2FA. Run the connect command below before querying."
