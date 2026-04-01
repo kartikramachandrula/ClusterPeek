@@ -155,6 +155,48 @@ def _parse_sinfo_line(line: str) -> dict | None:
     }
 
 
+def _fetch_node_users(cfg: dict) -> dict[str, list[str]]:
+    """Return {node_name: [username, ...]} for all running jobs."""
+    # %N = nodelist, %u = username — one row per job
+    stdout, _, rc = run_remote(cfg, "squeue -h -t R -o '%N|%u'")
+    if rc != 0:
+        return {}
+    node_users: dict[str, list[str]] = {}
+    for line in stdout.splitlines():
+        parts = line.split("|")
+        if len(parts) < 2:
+            continue
+        nodelist, user = parts[0].strip(), parts[1].strip()
+        # squeue may give a compressed nodelist (e.g. node[1-3,5])
+        # Store against the whole nodelist string; frontend displays it as-is
+        for node in _expand_nodelist(nodelist):
+            node_users.setdefault(node, [])
+            if user not in node_users[node]:
+                node_users[node].append(user)
+    return node_users
+
+
+def _expand_nodelist(nodelist: str) -> list[str]:
+    """Best-effort expansion of SLURM nodelist into individual names.
+    Handles node[1,3-5] style ranges. Falls back to returning the raw string."""
+    if "[" not in nodelist:
+        return [nodelist] if nodelist else []
+    prefix, rest = nodelist.split("[", 1)
+    rest = rest.rstrip("]")
+    nodes = []
+    for part in rest.split(","):
+        if "-" in part:
+            try:
+                lo, hi = part.split("-", 1)
+                width = len(lo)
+                nodes += [f"{prefix}{str(i).zfill(width)}" for i in range(int(lo), int(hi) + 1)]
+            except ValueError:
+                nodes.append(f"{prefix}{part}")
+        else:
+            nodes.append(f"{prefix}{part}")
+    return nodes
+
+
 def fetch_cluster_status(cfg: dict) -> dict:
     cmd = f"sinfo -N -h --Format={_SINFO_FORMAT}"
     stdout, stderr, rc = run_remote(cfg, cmd)
@@ -176,6 +218,11 @@ def fetch_cluster_status(cfg: dict) -> dict:
             del seen[n]["partition"]
         elif row["partition"] and row["partition"] not in seen[n]["partitions"]:
             seen[n]["partitions"].append(row["partition"])
+
+    # Annotate each node with the users currently running jobs on it
+    node_users = _fetch_node_users(cfg)
+    for node in seen.values():
+        node["users"] = node_users.get(node["name"], [])
 
     nodes = list(seen.values())
 
@@ -249,11 +296,9 @@ def fetch_my_jobs(cfg: dict) -> list[dict]:
         if len(parts) < 11:
             continue
         job_id, name, partition, state, nodelist, gres, cpus, mem, timelimit, start, reason = parts[:11]
-        # Extract GPU count from gres field (e.g. "gpu:2" or "gpu:a100:2")
-        gpus = 0
-        gm = re.search(r"gpu:(?:[a-zA-Z][^:()]*:)?(\d+)", gres)
-        if gm:
-            gpus = int(gm.group(1))
+        gpu_type, gpus = _parse_gres(gres.strip())
+        if gpu_type == "gpu":
+            gpu_type = ""  # unlabelled — don't show a type
         jobs.append({
             "job_id":    job_id.strip(),
             "name":      name.strip(),
@@ -261,6 +306,7 @@ def fetch_my_jobs(cfg: dict) -> list[dict]:
             "state":     state.strip(),
             "nodelist":  nodelist.strip(),
             "gres":      gres.strip(),
+            "gpu_type":  gpu_type,
             "gpus":      gpus,
             "cpus":      cpus.strip(),
             "mem":       mem.strip(),

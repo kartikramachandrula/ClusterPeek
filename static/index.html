@@ -775,6 +775,7 @@ function buildStatusHTML(name, status, jobs) {
                 <th>GPU Type</th>
                 <th>GPUs Free</th>
                 <th>CPU Usage</th>
+                <th>Users</th>
                 <th>Partitions</th>
               </tr>
             </thead>
@@ -812,6 +813,7 @@ function buildMyJobsHTML(name, jobs) {
               <th>State</th>
               <th>Nodes</th>
               <th>GPUs</th>
+              <th>GPU Type</th>
               <th>CPUs</th>
               <th>Memory</th>
               <th>Time Limit</th>
@@ -827,6 +829,7 @@ function buildMyJobsHTML(name, jobs) {
                 <td><span class="state-badge state-${escHtml(j.state)}">${escHtml(j.state)}</span></td>
                 <td>${j.nodelist ? escHtml(j.nodelist) : '<span style="color:var(--muted)">—</span>'}</td>
                 <td>${j.gpus > 0 ? `<span style="color:var(--accent);font-weight:600;">${j.gpus}</span>` : '<span style="color:var(--muted)">—</span>'}</td>
+                <td>${j.gpu_type ? escHtml(j.gpu_type.toUpperCase()) : '<span style="color:var(--muted)">—</span>'}</td>
                 <td>${escHtml(j.cpus)}</td>
                 <td>${escHtml(j.mem)}</td>
                 <td>${escHtml(j.timelimit)}</td>
@@ -873,6 +876,7 @@ function buildNodeRows(nodes) {
           <span class="mini-label">${n.cpu_alloc}/${n.cpu_total}</span>
         </div>
       </td>
+      <td style="color:var(--muted);font-size:11px;">${n.users && n.users.length ? escHtml(n.users.join(', ')) : '—'}</td>
       <td style="color:var(--muted);font-size:11px;">${escHtml(partStr)}</td>
     </tr>`;
   }).join('');
