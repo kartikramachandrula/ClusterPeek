@@ -75,16 +75,20 @@ def run_remote(cfg: dict, command: str, timeout: int = 30) -> tuple[str, str, in
 # ---------------------------------------------------------------------------
 
 def _parse_gres(gres_str: str) -> tuple[str, int]:
-    """Extract (gpu_type, count) from a gres string like 'gpu:a100:4'."""
+    """Extract (gpu_type, count) from gres strings. Handles all SLURM formats:
+      gpu:a100:4          gpu:a100:4(S:0)
+      gpu:a100:2(IDX:0,1) gpu:2(IDX:0,1)   gpu:4   gpu:0(IDX:N/A)
+    """
     if not gres_str or gres_str in ("(null)", "N/A", ""):
         return "none", 0
-    m = re.search(r"gpu:([^:(]+)[:(]?:?(\d+)", gres_str)
+    # gpu:TYPE:COUNT  — type always starts with a letter, distinguishing it from gpu:COUNT
+    m = re.search(r"gpu:([a-zA-Z][^:()]*):(\d+)", gres_str)
     if m:
         return m.group(1).lower(), int(m.group(2))
-    # bare 'gpu:4' with no type
-    m2 = re.search(r"gpu:(\d+)", gres_str)
-    if m2:
-        return "gpu", int(m2.group(1))
+    # gpu:COUNT  (no type, e.g. GresUsed=gpu:2(IDX:0,1) or gpu:4)
+    m = re.search(r"gpu:(\d+)", gres_str)
+    if m:
+        return "gpu", int(m.group(1))
     return "none", 0
 
 
