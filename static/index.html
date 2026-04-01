@@ -4,6 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>ClusterPeek</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2358a6ff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><rect x='2' y='3' width='20' height='14' rx='2'/><line x1='8' y1='21' x2='16' y2='21'/><line x1='12' y1='17' x2='12' y2='21'/></svg>">
   <style>
     /* ── Reset & base ───────────────────────────────────────────────── */
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -360,6 +361,7 @@
       font-weight: 600;
       font-family: monospace;
     }
+    /* Node states */
     .state-IDLE      { background: rgba(63,185,80,0.15);  color: var(--green); }
     .state-ALLOCATED { background: rgba(248,81,73,0.15);  color: var(--red); }
     .state-MIXED     { background: rgba(210,153,34,0.15); color: var(--yellow); }
@@ -368,6 +370,12 @@
     .state-DRAINING  { background: rgba(227,163,74,0.15); color: var(--orange); }
     .state-DRAINED   { background: rgba(110,118,129,0.15);color: var(--muted); }
     .state-OTHER     { background: rgba(110,118,129,0.15);color: var(--muted); }
+    /* Job states */
+    .state-RUNNING    { background: rgba(63,185,80,0.15);  color: var(--green); }
+    .state-PENDING    { background: rgba(210,153,34,0.15); color: var(--yellow); }
+    .state-COMPLETING { background: rgba(88,166,255,0.15); color: var(--accent); }
+    .state-FAILED     { background: rgba(248,81,73,0.15);  color: var(--red); }
+    .state-CANCELLED  { background: rgba(110,118,129,0.15);color: var(--muted); }
 
     /* Mini bar */
     .mini-bar-wrap {
@@ -531,6 +539,7 @@
 // ── State ──────────────────────────────────────────────────────────────────
 let clusters = {};
 let statusCache = {};
+let jobsCache = {};
 let autoRefresh = true;
 let refreshTimer = null;
 const REFRESH_INTERVAL = 60_000;
@@ -568,13 +577,17 @@ async function refreshAll() {
     return;
   }
 
-  // Fetch status for all clusters in parallel
-  const fetches = Object.keys(clusters).map(name =>
+  // Fetch status + jobs for all clusters in parallel
+  const fetches = Object.keys(clusters).flatMap(name => [
     fetch(`/api/clusters/${name}/status`)
       .then(r => r.json())
       .then(data => { statusCache[name] = data; })
-      .catch(e => { statusCache[name] = { connected: false, error: String(e) }; })
-  );
+      .catch(e => { statusCache[name] = { connected: false, error: String(e) }; }),
+    fetch(`/api/clusters/${name}/myjobs`)
+      .then(r => r.ok ? r.json() : [])
+      .then(data => { jobsCache[name] = data; })
+      .catch(() => { jobsCache[name] = []; }),
+  ]);
   await Promise.all(fetches);
 
   render();
@@ -584,12 +597,16 @@ async function refreshAll() {
 }
 
 async function refreshCluster(name) {
-  try {
-    const res = await fetch(`/api/clusters/${name}/status`);
-    statusCache[name] = await res.json();
-  } catch (e) {
-    statusCache[name] = { connected: false, error: String(e) };
-  }
+  await Promise.all([
+    fetch(`/api/clusters/${name}/status`)
+      .then(r => r.json())
+      .then(data => { statusCache[name] = data; })
+      .catch(e => { statusCache[name] = { connected: false, error: String(e) }; }),
+    fetch(`/api/clusters/${name}/myjobs`)
+      .then(r => r.ok ? r.json() : [])
+      .then(data => { jobsCache[name] = data; })
+      .catch(() => { jobsCache[name] = []; }),
+  ]);
   renderCluster(name);
   document.getElementById('last-updated').textContent =
     'Updated ' + new Date().toLocaleTimeString();
@@ -613,10 +630,11 @@ function renderCluster(name) {
   if (!el) return;
   const meta = clusters[name];
   const status = statusCache[name] || {};
-  el.innerHTML = buildClusterHTML(name, meta, status);
+  const jobs = jobsCache[name] || [];
+  el.innerHTML = buildClusterHTML(name, meta, status, jobs);
 }
 
-function buildClusterHTML(name, meta, status) {
+function buildClusterHTML(name, meta, status, jobs) {
   const connected = status.connected;
   const dotClass = connected ? 'connected' : 'disconnected';
 
@@ -641,7 +659,7 @@ function buildClusterHTML(name, meta, status) {
   } else if (status.error) {
     body = `<div class="error-box">${escHtml(status.error)}</div>`;
   } else {
-    body = buildStatusHTML(name, status);
+    body = buildStatusHTML(name, status, jobs);
   }
 
   return `
@@ -657,7 +675,7 @@ function buildClusterHTML(name, meta, status) {
     ${body}`;
 }
 
-function buildStatusHTML(name, status) {
+function buildStatusHTML(name, status, jobs) {
   const gpuSummary = status.gpu_summary || {};
   const partitions = status.partition_summary || {};
   const nodes = status.nodes || [];
@@ -690,7 +708,7 @@ function buildStatusHTML(name, status) {
     html += '</div>';
   } else {
     html += `<div class="section-label" style="margin-bottom:16px;">GPU Resources</div>
-      <p style="color:var(--muted);font-size:13px;margin-bottom:24px;">No GPU nodes found in scontrol output.</p>`;
+      <p style="color:var(--muted);font-size:13px;margin-bottom:24px;">No GPU nodes found.</p>`;
   }
 
   // Partition summary
@@ -759,7 +777,68 @@ function buildStatusHTML(name, status) {
       </div>`;
   }
 
+  // My Jobs table
+  html += buildMyJobsHTML(name, jobs);
+
   return html;
+}
+
+function buildMyJobsHTML(name, jobs) {
+  const totalGpus = jobs.reduce((s, j) => s + j.gpus, 0);
+  const running   = jobs.filter(j => j.state === 'RUNNING').length;
+  const pending   = jobs.filter(j => j.state === 'PENDING').length;
+
+  let inner = '';
+  if (jobs.length === 0) {
+    inner = `<div style="padding:20px;text-align:center;color:var(--muted);font-size:13px;">No active jobs</div>`;
+  } else {
+    inner = `
+      <div class="table-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th>Job ID</th>
+              <th>Name</th>
+              <th>Partition</th>
+              <th>State</th>
+              <th>Nodes</th>
+              <th>GPUs</th>
+              <th>CPUs</th>
+              <th>Memory</th>
+              <th>Time Limit</th>
+              <th>Start / Reason</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${jobs.map(j => `
+              <tr>
+                <td style="color:var(--accent)">${escHtml(j.job_id)}</td>
+                <td>${escHtml(j.name)}</td>
+                <td style="color:var(--muted);font-size:11px;">${escHtml(j.partition)}</td>
+                <td><span class="state-badge state-${escHtml(j.state)}">${escHtml(j.state)}</span></td>
+                <td>${j.nodelist ? escHtml(j.nodelist) : '<span style="color:var(--muted)">—</span>'}</td>
+                <td>${j.gpus > 0 ? `<span style="color:var(--accent);font-weight:600;">${j.gpus}</span>` : '<span style="color:var(--muted)">—</span>'}</td>
+                <td>${escHtml(j.cpus)}</td>
+                <td>${escHtml(j.mem)}</td>
+                <td>${escHtml(j.timelimit)}</td>
+                <td style="font-size:11px;color:var(--muted);">${escHtml(j.reason || j.start)}</td>
+              </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>`;
+  }
+
+  const badge = jobs.length > 0
+    ? ` <span style="font-size:11px;font-weight:400;color:var(--muted);">${running} running · ${pending} pending · ${totalGpus} GPU${totalGpus !== 1 ? 's' : ''}</span>`
+    : '';
+
+  return `
+    <div class="node-table-wrap" style="margin-top:4px;">
+      <div class="node-table-header">
+        <span class="node-table-title">My Jobs${badge}</span>
+      </div>
+      ${inner}
+    </div>`;
 }
 
 function buildNodeRows(nodes) {
