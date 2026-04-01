@@ -717,9 +717,13 @@ function buildStatusHTML(name, status, jobs) {
   }
 
   // Partition summary
-  if (Object.keys(partitions).length > 0) {
+  const gpuPartitions = Object.fromEntries(
+    Object.entries(partitions).filter(([, p]) => p.gpu_total > 0)
+  );
+
+  if (Object.keys(gpuPartitions).length > 0) {
     html += `<div class="section-label">Partitions</div><div class="partition-grid">`;
-    for (const [pname, pinfo] of Object.entries(partitions)) {
+    for (const [pname, pinfo] of Object.entries(gpuPartitions)) {
       const stateStr = Object.entries(pinfo.states)
         .map(([s,c]) => `${c}×${s}`)
         .join(', ');
