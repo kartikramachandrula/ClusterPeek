@@ -752,7 +752,7 @@ function buildStatusHTML(name, status, jobs) {
     html += `
       <div class="node-table-wrap">
         <div class="node-table-header">
-          <span class="node-table-title">Node Details <span style="color:var(--muted);font-weight:400;">(${gpuNodes.length} nodes)</span></span>
+          <span class="node-table-title">GPU Node Status <span style="color:var(--muted);font-weight:400;">(${gpuNodes.length} nodes)</span></span>
           <div class="filter-row">
             <select class="filter-select" id="filter-state-${name}" onchange="applyFilter('${name}')">
               <option value="">All states</option>
@@ -766,6 +766,9 @@ function buildStatusHTML(name, status, jobs) {
               <option value="">All partitions</option>
               ${parts.map(p => `<option value="${escHtml(p)}">${escHtml(p)}</option>`).join('')}
             </select>
+            <input type="text" class="filter-select" id="filter-user-${name}"
+              placeholder="Search user…" oninput="applyFilter('${name}')"
+              style="min-width:130px;">
           </div>
         </div>
         <div class="table-scroll">
@@ -867,7 +870,8 @@ function buildNodeRows(nodes) {
     return `<tr
       data-state="${escHtml(n.state)}"
       data-gpu="${escHtml(n.gpu_type)}"
-      data-partitions="${escHtml(partStr)}">
+      data-partitions="${escHtml(partStr)}"
+      data-users="${escHtml((n.users || []).join(', '))}">
       <td>${escHtml(n.name)}</td>
       <td><span class="state-badge ${stateClass}">${escHtml(n.state)}</span></td>
       <td>${n.gpu_type !== 'none' ? escHtml(n.gpu_type.toUpperCase()) : '<span style="color:var(--muted)">—</span>'}</td>
@@ -888,6 +892,7 @@ function applyFilter(name) {
   const stateFilter = document.getElementById(`filter-state-${name}`)?.value || '';
   const gpuFilter   = document.getElementById(`filter-gpu-${name}`)?.value || '';
   const partFilter  = document.getElementById(`filter-part-${name}`)?.value || '';
+  const userFilter  = (document.getElementById(`filter-user-${name}`)?.value || '').toLowerCase().trim();
 
   const tbody = document.getElementById(`node-tbody-${name}`);
   if (!tbody) return;
@@ -896,7 +901,8 @@ function applyFilter(name) {
     const stateOk = !stateFilter || row.dataset.state === stateFilter;
     const gpuOk   = !gpuFilter   || row.dataset.gpu === gpuFilter;
     const partOk  = !partFilter  || row.dataset.partitions.split(', ').includes(partFilter);
-    row.style.display = stateOk && gpuOk && partOk ? '' : 'none';
+    const userOk  = !userFilter  || (row.dataset.users || '').toLowerCase().includes(userFilter);
+    row.style.display = stateOk && gpuOk && partOk && userOk ? '' : 'none';
   });
 }
 
