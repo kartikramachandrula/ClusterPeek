@@ -11,7 +11,6 @@ import yaml
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
 
 app = FastAPI(title="ClusterPeek")
 
@@ -379,49 +378,6 @@ def api_debug(cluster_name: str):
     raw_squeue, _, _ = run_remote(cfg, "squeue --me -h -o '%i|%j|%P|%T|%N|%b|%C|%m|%l|%S|%r'")
     return {"sinfo_sample": raw_sinfo, "squeue_me": raw_squeue,
             "sinfo_format": _SINFO_FORMAT}
-
-
-class GpuRequest(BaseModel):
-    partition: str
-    gpus: int = 1
-    hours: float = 1.0
-
-
-def _hours_to_slurm_time(hours: float) -> str:
-    total = int(hours * 3600)
-    h, rem = divmod(total, 3600)
-    m, s = divmod(rem, 60)
-    return f"{h}:{m:02d}:{s:02d}"
-
-
-@app.post("/api/clusters/{cluster_name}/request-gpu")
-def api_request_gpu(cluster_name: str, body: GpuRequest):
-    clusters = get_clusters()
-    if cluster_name not in clusters:
-        raise HTTPException(status_code=404, detail="Cluster not found")
-    cfg = clusters[cluster_name]
-    if not is_connected(cfg):
-        raise HTTPException(status_code=503, detail="Not connected")
-    if body.gpus < 1 or body.gpus > 8:
-        raise HTTPException(status_code=400, detail="gpus must be 1–8")
-    if body.hours <= 0 or body.hours > 72:
-        raise HTTPException(status_code=400, detail="hours must be 0–72")
-
-    time_str = _hours_to_slurm_time(body.hours)
-    sleep_sec = int(body.hours * 3600)
-    cmd = (
-        f"sbatch --partition={body.partition} "
-        f"--gres=gpu:{body.gpus} "
-        f"--time={time_str} "
-        f"--job-name=interactive "
-        f"--wrap='sleep {sleep_sec}'"
-    )
-    stdout, stderr, rc = run_remote(cfg, cmd)
-    if rc != 0:
-        raise HTTPException(status_code=500, detail=stderr.strip() or "sbatch failed")
-
-    job_id = stdout.strip().split()[-1] if stdout.strip() else "unknown"
-    return {"job_id": job_id, "partition": body.partition, "gpus": body.gpus, "time": time_str}
 
 
 @app.get("/api/clusters/{cluster_name}/disconnect")

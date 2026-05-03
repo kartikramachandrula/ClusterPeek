@@ -543,15 +543,23 @@
     }
     .field input:focus, .field select:focus { outline: none; border-color: var(--accent); }
     .modal-actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 24px; }
-    .modal-result {
-      margin-top: 16px;
-      padding: 12px 16px;
+    .salloc-box {
+      margin-top: 20px;
+      background: var(--bg);
+      border: 1px solid var(--border);
       border-radius: 6px;
-      font-size: 13px;
-      display: none;
+      padding: 12px 16px;
+      font-family: monospace;
+      font-size: 12px;
+      color: var(--cyan);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      word-break: break-all;
     }
-    .modal-result.success { background: rgba(63,185,80,0.1); border: 1px solid rgba(63,185,80,0.3); color: var(--green); }
-    .modal-result.error   { background: rgba(248,81,73,0.1);  border: 1px solid rgba(248,81,73,0.3);  color: var(--red); }
+    .salloc-box code { flex: 1; }
+    .btn-xs { padding: 3px 10px; font-size: 11px; flex-shrink: 0; }
   </style>
 </head>
 <body>
@@ -582,23 +590,26 @@
 
 <div class="modal-backdrop" id="gpu-modal-backdrop" onclick="closeGpuModal(event)">
   <div class="modal">
-    <h2>Request GPU</h2>
+    <h2>Request Interactive GPU Session</h2>
     <div class="field">
       <label>Partition</label>
-      <select id="modal-partition"></select>
+      <select id="modal-partition" onchange="updateSallocCmd()"></select>
     </div>
     <div class="field">
       <label>Number of GPUs</label>
-      <input type="number" id="modal-gpus" value="1" min="1" max="8">
+      <input type="number" id="modal-gpus" value="1" min="1" max="2" oninput="updateSallocCmd()">
     </div>
     <div class="field">
       <label>Duration (hours)</label>
-      <input type="number" id="modal-hours" value="2" min="0.5" max="72" step="0.5">
+      <input type="number" id="modal-hours" value="2" min="0.5" max="6" step="0.5" oninput="updateSallocCmd()">
     </div>
-    <div class="modal-result" id="modal-result"></div>
+    <p style="font-size:12px;color:var(--muted);margin-top:4px;">Run this command on the login node:</p>
+    <div class="salloc-box">
+      <code id="salloc-cmd"></code>
+      <button class="btn btn-xs" onclick="copySallocCmd()">Copy</button>
+    </div>
     <div class="modal-actions">
-      <button class="btn" onclick="closeGpuModal()">Cancel</button>
-      <button class="btn primary" id="modal-submit-btn" onclick="submitGpuRequest()">Submit Job</button>
+      <button class="btn" onclick="closeGpuModal()">Close</button>
     </div>
   </div>
 </div>
@@ -850,6 +861,7 @@ function buildStatusHTML(name, status, jobs) {
                 <th>CPU Usage</th>
                 <th>Users</th>
                 <th>Partitions</th>
+                <th></th>
               </tr>
             </thead>
             <tbody id="node-tbody-${name}">
@@ -921,7 +933,6 @@ function buildMyJobsHTML(name, jobs) {
     <div class="node-table-wrap" style="margin-top:4px;">
       <div class="node-table-header">
         <span class="node-table-title">My Jobs${badge}</span>
-        <button class="btn primary" onclick="openGpuModal('${name}')">+ Request GPU</button>
       </div>
       ${inner}
     </div>`;
@@ -935,6 +946,16 @@ function buildNodeRows(nodes) {
       : '<span style="color:var(--muted)">—</span>';
     const cpuPct = n.cpu_total > 0 ? Math.round((n.cpu_alloc / n.cpu_total) * 100) : 0;
     const partStr = n.partitions.join(', ');
+    const nodeData = encodeURIComponent(JSON.stringify({
+      node: n.name,
+      partitions: n.partitions,
+      gpu_type: n.gpu_type,
+      gpu_free: n.gpu_free,
+    }));
+    const canRequest = n.gpu_free > 0 && n.state !== 'DOWN' && n.state !== 'DRAIN';
+    const requestBtn = canRequest
+      ? `<button class="btn btn-xs primary" onclick="openGpuModal(${nodeData})">Request</button>`
+      : `<span style="color:var(--muted);font-size:11px;">—</span>`;
 
     return `<tr
       data-state="${escHtml(n.state)}"
@@ -953,6 +974,7 @@ function buildNodeRows(nodes) {
       </td>
       <td style="color:var(--muted);font-size:11px;">${n.users && n.users.length ? escHtml(n.users.join(', ')) : '—'}</td>
       <td style="color:var(--muted);font-size:11px;">${escHtml(partStr)}</td>
+      <td>${requestBtn}</td>
     </tr>`;
   }).join('');
 }
@@ -992,68 +1014,55 @@ function copyCmd(name) {
 }
 
 // ── GPU Request Modal ──────────────────────────────────────────────────────
-let _modalCluster = null;
+let _modalNode = null;
 
-function openGpuModal(clusterName) {
-  _modalCluster = clusterName;
-  const status = statusCache[clusterName] || {};
-  const partitions = status.partition_summary || {};
-  const gpuPartitions = Object.keys(partitions).filter(p => partitions[p].gpu_total > 0).sort();
+function openGpuModal(nodeData) {
+  _modalNode = nodeData;
 
   const sel = document.getElementById('modal-partition');
-  sel.innerHTML = gpuPartitions.map(p => `<option value="${escHtml(p)}">${escHtml(p)}</option>`).join('');
+  const gpuParts = nodeData.partitions.filter(p => p.toLowerCase().includes('gpu'));
+  const opts = (gpuParts.length ? gpuParts : nodeData.partitions);
+  sel.innerHTML = opts.map(p => `<option value="${escHtml(p)}">${escHtml(p)}</option>`).join('');
 
-  const result = document.getElementById('modal-result');
-  result.style.display = 'none';
-  result.className = 'modal-result';
-  document.getElementById('modal-submit-btn').disabled = false;
-  document.getElementById('modal-submit-btn').textContent = 'Submit Job';
+  document.getElementById('modal-gpus').max = Math.min(nodeData.gpu_free, 2);
   document.getElementById('modal-gpus').value = 1;
   document.getElementById('modal-hours').value = 2;
 
+  updateSallocCmd();
   document.getElementById('gpu-modal-backdrop').classList.add('open');
 }
 
 function closeGpuModal(e) {
   if (e && e.target !== document.getElementById('gpu-modal-backdrop')) return;
   document.getElementById('gpu-modal-backdrop').classList.remove('open');
-  _modalCluster = null;
+  _modalNode = null;
 }
 
-async function submitGpuRequest() {
-  if (!_modalCluster) return;
+function updateSallocCmd() {
+  if (!_modalNode) return;
   const partition = document.getElementById('modal-partition').value;
-  const gpus = parseInt(document.getElementById('modal-gpus').value, 10);
-  const hours = parseFloat(document.getElementById('modal-hours').value);
+  const gpus = parseInt(document.getElementById('modal-gpus').value, 10) || 1;
+  const hours = parseFloat(document.getElementById('modal-hours').value) || 1;
 
-  const btn = document.getElementById('modal-submit-btn');
-  const result = document.getElementById('modal-result');
-  btn.disabled = true;
-  btn.textContent = 'Submitting…';
-  result.style.display = 'none';
+  const totalMin = Math.round(hours * 60);
+  const h = Math.floor(totalMin / 60);
+  const m = String(totalMin % 60).padStart(2, '0');
+  const timeStr = `${h}:${m}:00`;
 
-  try {
-    const res = await fetch(`/api/clusters/${_modalCluster}/request-gpu`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ partition, gpus, hours }),
-    });
-    const data = await res.json();
-    if (!res.ok) {
-      throw new Error(data.detail || 'Request failed');
-    }
-    result.className = 'modal-result success';
-    result.textContent = `Job ${data.job_id} submitted — ${data.gpus} GPU(s) on ${data.partition} for ${data.time}. SSH in once it starts running.`;
-    result.style.display = 'block';
-    btn.textContent = 'Submitted';
-    refreshCluster(_modalCluster);
-  } catch (e) {
-    result.className = 'modal-result error';
-    result.textContent = e.message;
-    result.style.display = 'block';
-    btn.disabled = false;
-    btn.textContent = 'Submit Job';
-  }
+  const gpuType = _modalNode.gpu_type && _modalNode.gpu_type !== 'none'
+    ? `gpu:${_modalNode.gpu_type}:${gpus}`
+    : `gpu:${gpus}`;
+
+  const cmd = `salloc -p ${partition} --gres=${gpuType} --nodelist=${_modalNode.node} -t ${timeStr}`;
+  document.getElementById('salloc-cmd').textContent = cmd;
+}
+
+function copySallocCmd() {
+  const cmd = document.getElementById('salloc-cmd').textContent;
+  navigator.clipboard.writeText(cmd).then(() => {
+    const btn = document.querySelector('.salloc-box .btn');
+    if (btn) { btn.textContent = 'Copied!'; setTimeout(() => btn.textContent = 'Copy', 1500); }
+  });
 }
 
 // ── Utilities ──────────────────────────────────────────────────────────────
