@@ -284,8 +284,8 @@ def _build_partition_summary(rows: list[dict]) -> dict:
 
 def fetch_my_jobs(cfg: dict) -> list[dict]:
     # %i=jobid %j=name %P=partition %T=state %N=nodelist %b=gres/node
-    # %C=cpus  %m=min_mem %l=timelimit %S=starttime %r=reason(pending)
-    cmd = 'squeue --me -h -o "%i|%j|%P|%T|%N|%b|%C|%m|%l|%S|%r"'
+    # %C=cpus  %m=min_mem %l=timelimit %L=timeleft %S=starttime %r=reason(pending)
+    cmd = 'squeue --me -h -o "%i|%j|%P|%T|%N|%b|%C|%m|%l|%L|%S|%r"'
     stdout, stderr, rc = run_remote(cfg, cmd)
 
     if rc != 0:
@@ -294,9 +294,9 @@ def fetch_my_jobs(cfg: dict) -> list[dict]:
     jobs = []
     for line in stdout.strip().splitlines():
         parts = line.split("|")
-        if len(parts) < 11:
+        if len(parts) < 12:
             continue
-        job_id, name, partition, state, nodelist, gres, cpus, mem, timelimit, start, reason = parts[:11]
+        job_id, name, partition, state, nodelist, gres, cpus, mem, timelimit, timeleft, start, reason = parts[:12]
         gpu_type, gpus = _parse_gres(gres.strip())
         if gpu_type == "gpu":
             gpu_type = ""  # unlabelled — don't show a type
@@ -312,6 +312,7 @@ def fetch_my_jobs(cfg: dict) -> list[dict]:
             "cpus":      cpus.strip(),
             "mem":       mem.strip(),
             "timelimit": timelimit.strip(),
+            "timeleft":  timeleft.strip(),
             "start":     start.strip(),
             "reason":    reason.strip() if state.strip() == "PENDING" else "",
         })

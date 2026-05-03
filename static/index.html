@@ -884,11 +884,12 @@ function buildMyJobsHTML(name, jobs) {
               <th>Name</th>
               <th>Partition</th>
               <th>State</th>
-              <th>Nodes</th>
+              <th>Node</th>
               <th>GPUs</th>
               <th>GPU Type</th>
               <th>CPUs</th>
               <th>Memory</th>
+              <th>Time Left</th>
               <th>Time Limit</th>
               <th>Start / Reason</th>
               <th></th>
@@ -901,12 +902,13 @@ function buildMyJobsHTML(name, jobs) {
                 <td>${escHtml(j.name)}</td>
                 <td style="color:var(--muted);font-size:11px;">${escHtml(j.partition)}</td>
                 <td><span class="state-badge state-${escHtml(j.state)}">${escHtml(j.state)}</span></td>
-                <td>${j.nodelist ? escHtml(j.nodelist) : '<span style="color:var(--muted)">—</span>'}</td>
+                <td style="font-family:monospace;">${j.nodelist ? escHtml(j.nodelist) : '<span style="color:var(--muted)">—</span>'}</td>
                 <td>${j.gpus > 0 ? `<span style="color:var(--accent);font-weight:600;">${j.gpus}</span>` : '<span style="color:var(--muted)">—</span>'}</td>
                 <td>${j.gpu_type ? escHtml(j.gpu_type.toUpperCase()) : '<span style="color:var(--muted)">—</span>'}</td>
                 <td>${escHtml(j.cpus)}</td>
                 <td>${escHtml(j.mem)}</td>
-                <td>${escHtml(j.timelimit)}</td>
+                <td style="color:${j.state === 'RUNNING' ? 'var(--green)' : 'var(--muted)'};">${escHtml(j.timeleft || '—')}</td>
+                <td style="color:var(--muted);">${escHtml(j.timelimit)}</td>
                 <td style="font-size:11px;color:var(--muted);">${escHtml(j.reason || j.start)}</td>
                 <td><button class="btn btn-xs danger" onclick="cancelJob('${escHtml(name)}','${escHtml(j.job_id)}',this)">Cancel</button></td>
               </tr>`).join('')}
