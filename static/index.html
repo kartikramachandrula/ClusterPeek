@@ -558,7 +558,7 @@
   <div class="header-right">
     <label class="toggle-wrap" id="auto-refresh-label">
       <div class="toggle on" id="auto-refresh-toggle"></div>
-      Auto-refresh (60s)
+      <span id="refresh-label">Auto-refresh (60s)</span>
     </label>
     <span id="last-updated">—</span>
     <button class="btn" onclick="refreshAll()">Refresh now</button>
@@ -600,7 +600,8 @@ let _nodeStore = {};
 let jobsCache = {};
 let autoRefresh = true;
 let refreshTimer = null;
-const REFRESH_INTERVAL = 60_000;
+const REFRESH_INTERVAL_IDLE    = 60_000;
+const REFRESH_INTERVAL_PENDING = 10_000;
 
 // ── Boot ───────────────────────────────────────────────────────────────────
 (async function init() {
@@ -619,9 +620,17 @@ function setupToggle() {
   });
 }
 
+function hasPendingJobs() {
+  return Object.values(jobsCache).some(jobs => jobs.some(j => j.state === 'PENDING'));
+}
+
 function scheduleRefresh() {
   clearTimeout(refreshTimer);
-  if (autoRefresh) refreshTimer = setTimeout(refreshAll, REFRESH_INTERVAL);
+  if (!autoRefresh) return;
+  const pending = hasPendingJobs();
+  const interval = pending ? REFRESH_INTERVAL_PENDING : REFRESH_INTERVAL_IDLE;
+  document.getElementById('refresh-label').textContent = pending ? 'Auto-refresh (10s)' : 'Auto-refresh (60s)';
+  refreshTimer = setTimeout(refreshAll, interval);
 }
 
 // ── Main refresh ───────────────────────────────────────────────────────────

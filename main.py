@@ -410,7 +410,7 @@ def api_request_gpu(cluster_name: str, body: GpuRequest):
     gres = f"gpu:{body.gpu_type}:{body.gpus}" if body.gpu_type and body.gpu_type != "none" else f"gpu:{body.gpus}"
     cmd = (
         f"sbatch --partition={body.partition} --gres={gres} "
-        f"--nodelist={body.node} --time={time_str} "
+        f"--time={time_str} "
         f"--job-name=interactive --wrap='sleep {sleep_sec}'"
     )
     stdout, stderr, rc = run_remote(cfg, cmd)
@@ -418,7 +418,7 @@ def api_request_gpu(cluster_name: str, body: GpuRequest):
         raise HTTPException(status_code=500, detail=stderr.strip() or "sbatch failed")
 
     job_id = stdout.strip().split()[-1] if stdout.strip() else "unknown"
-    return {"job_id": job_id, "node": body.node, "gpus": body.gpus, "time": time_str}
+    return {"job_id": job_id, "gpus": body.gpus, "time": time_str}
 
 
 @app.get("/api/clusters/{cluster_name}/disconnect")
