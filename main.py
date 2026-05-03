@@ -410,7 +410,7 @@ def api_request_gpu(cluster_name: str, body: GpuRequest):
     gres = f"gpu:{body.gpu_type}:{body.gpus}" if body.gpu_type and body.gpu_type != "none" else f"gpu:{body.gpus}"
     cmd = (
         f"sbatch --partition={body.partition} --gres={gres} "
-        f"--time={time_str} "
+        f"--time={time_str} --output=/dev/null --error=/dev/null "
         f"--job-name=interactive --wrap='sleep {sleep_sec}'"
     )
     stdout, stderr, rc = run_remote(cfg, cmd)
