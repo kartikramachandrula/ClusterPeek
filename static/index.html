@@ -507,6 +507,51 @@
     .table-scroll::-webkit-scrollbar { width: 6px; }
     .table-scroll::-webkit-scrollbar-track { background: transparent; }
     .table-scroll::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+    /* ── Modal ──────────────────────────────────────────────────────── */
+    .modal-backdrop {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.6);
+      z-index: 200;
+      align-items: center;
+      justify-content: center;
+    }
+    .modal-backdrop.open { display: flex; }
+    .modal {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 28px;
+      width: 100%;
+      max-width: 420px;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+    }
+    .modal h2 { font-size: 16px; font-weight: 700; margin-bottom: 20px; }
+    .field { margin-bottom: 16px; }
+    .field label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 6px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.6px; }
+    .field input, .field select {
+      width: 100%;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--text);
+      font-size: 13px;
+      font-family: inherit;
+      padding: 8px 12px;
+    }
+    .field input:focus, .field select:focus { outline: none; border-color: var(--accent); }
+    .modal-actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 24px; }
+    .modal-result {
+      margin-top: 16px;
+      padding: 12px 16px;
+      border-radius: 6px;
+      font-size: 13px;
+      display: none;
+    }
+    .modal-result.success { background: rgba(63,185,80,0.1); border: 1px solid rgba(63,185,80,0.3); color: var(--green); }
+    .modal-result.error   { background: rgba(248,81,73,0.1);  border: 1px solid rgba(248,81,73,0.3);  color: var(--red); }
   </style>
 </head>
 <body>
@@ -534,6 +579,29 @@
     Loading clusters…
   </div>
 </main>
+
+<div class="modal-backdrop" id="gpu-modal-backdrop" onclick="closeGpuModal(event)">
+  <div class="modal">
+    <h2>Request GPU</h2>
+    <div class="field">
+      <label>Partition</label>
+      <select id="modal-partition"></select>
+    </div>
+    <div class="field">
+      <label>Number of GPUs</label>
+      <input type="number" id="modal-gpus" value="1" min="1" max="8">
+    </div>
+    <div class="field">
+      <label>Duration (hours)</label>
+      <input type="number" id="modal-hours" value="2" min="0.5" max="72" step="0.5">
+    </div>
+    <div class="modal-result" id="modal-result"></div>
+    <div class="modal-actions">
+      <button class="btn" onclick="closeGpuModal()">Cancel</button>
+      <button class="btn primary" id="modal-submit-btn" onclick="submitGpuRequest()">Submit Job</button>
+    </div>
+  </div>
+</div>
 
 <script>
 // ── State ──────────────────────────────────────────────────────────────────
@@ -853,6 +921,7 @@ function buildMyJobsHTML(name, jobs) {
     <div class="node-table-wrap" style="margin-top:4px;">
       <div class="node-table-header">
         <span class="node-table-title">My Jobs${badge}</span>
+        <button class="btn primary" onclick="openGpuModal('${name}')">+ Request GPU</button>
       </div>
       ${inner}
     </div>`;
@@ -920,6 +989,71 @@ function copyCmd(name) {
     const btn = el.nextElementSibling;
     if (btn) { btn.textContent = 'Copied!'; setTimeout(() => btn.textContent = 'Copy', 1500); }
   });
+}
+
+// ── GPU Request Modal ──────────────────────────────────────────────────────
+let _modalCluster = null;
+
+function openGpuModal(clusterName) {
+  _modalCluster = clusterName;
+  const status = statusCache[clusterName] || {};
+  const partitions = status.partition_summary || {};
+  const gpuPartitions = Object.keys(partitions).filter(p => partitions[p].gpu_total > 0).sort();
+
+  const sel = document.getElementById('modal-partition');
+  sel.innerHTML = gpuPartitions.map(p => `<option value="${escHtml(p)}">${escHtml(p)}</option>`).join('');
+
+  const result = document.getElementById('modal-result');
+  result.style.display = 'none';
+  result.className = 'modal-result';
+  document.getElementById('modal-submit-btn').disabled = false;
+  document.getElementById('modal-submit-btn').textContent = 'Submit Job';
+  document.getElementById('modal-gpus').value = 1;
+  document.getElementById('modal-hours').value = 2;
+
+  document.getElementById('gpu-modal-backdrop').classList.add('open');
+}
+
+function closeGpuModal(e) {
+  if (e && e.target !== document.getElementById('gpu-modal-backdrop')) return;
+  document.getElementById('gpu-modal-backdrop').classList.remove('open');
+  _modalCluster = null;
+}
+
+async function submitGpuRequest() {
+  if (!_modalCluster) return;
+  const partition = document.getElementById('modal-partition').value;
+  const gpus = parseInt(document.getElementById('modal-gpus').value, 10);
+  const hours = parseFloat(document.getElementById('modal-hours').value);
+
+  const btn = document.getElementById('modal-submit-btn');
+  const result = document.getElementById('modal-result');
+  btn.disabled = true;
+  btn.textContent = 'Submitting…';
+  result.style.display = 'none';
+
+  try {
+    const res = await fetch(`/api/clusters/${_modalCluster}/request-gpu`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ partition, gpus, hours }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      throw new Error(data.detail || 'Request failed');
+    }
+    result.className = 'modal-result success';
+    result.textContent = `Job ${data.job_id} submitted — ${data.gpus} GPU(s) on ${data.partition} for ${data.time}. SSH in once it starts running.`;
+    result.style.display = 'block';
+    btn.textContent = 'Submitted';
+    refreshCluster(_modalCluster);
+  } catch (e) {
+    result.className = 'modal-result error';
+    result.textContent = e.message;
+    result.style.display = 'block';
+    btn.disabled = false;
+    btn.textContent = 'Submit Job';
+  }
 }
 
 // ── Utilities ──────────────────────────────────────────────────────────────

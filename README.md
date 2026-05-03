@@ -17,8 +17,9 @@ A lightweight web dashboard for monitoring SLURM compute clusters — GPU availa
 ```bash
 git clone https://github.com/your-username/ClusterPeek.git
 cd ClusterPeek
-python -m venv venv && source venv/bin/activate
-pip install -r requirements.txt
+python -m venv .venv && source .venv/bin/activate
+python -m ensurepip   # only needed if pip3 is missing after activation
+pip3 install -r requirements.txt
 ```
 
 ### Configure clusters
@@ -34,10 +35,16 @@ clusters:
 
 ### Connect via SSH ControlMaster
 
-Before starting the server, establish a persistent SSH session to each cluster. The dashboard will show you the exact command to run:
+Run the included setup script to establish persistent SSH sessions for all configured clusters:
 
 ```bash
-ssh -M -S /tmp/ssh-cluster.sock -fN your-username@cluster.example.edu
+python connect.py
+```
+
+You'll be prompted to authenticate (Kerberos / Duo) for each cluster. Or connect manually:
+
+```bash
+ssh -M -S ~/.ssh/control-<host> -N -f your-username@cluster.example.edu
 ```
 
 ### Run
@@ -52,5 +59,4 @@ Open [http://127.0.0.1:8765](http://127.0.0.1:8765) in your browser.
 
 - **Partition Summary** — overview of GPU availability across all partitions
 - **GPU Node Status** — per-node breakdown with users; search by username
-- **My Jobs** — your current SLURM jobs (set your username in the UI)
-- **Debug** — raw `sinfo`/`squeue` output for troubleshooting
+- **My Jobs** — your current SLURM jobs; use **Request GPU** to submit a new allocation
