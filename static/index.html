@@ -543,22 +543,6 @@
     }
     .field input:focus, .field select:focus { outline: none; border-color: var(--accent); }
     .modal-actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 24px; }
-    .salloc-box {
-      margin-top: 20px;
-      background: var(--bg);
-      border: 1px solid var(--border);
-      border-radius: 6px;
-      padding: 12px 16px;
-      font-family: monospace;
-      font-size: 12px;
-      color: var(--cyan);
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 12px;
-      word-break: break-all;
-    }
-    .salloc-box code { flex: 1; }
     .btn-xs { padding: 3px 10px; font-size: 11px; flex-shrink: 0; }
   </style>
 </head>
@@ -590,26 +574,20 @@
 
 <div class="modal-backdrop" id="gpu-modal-backdrop" onclick="closeGpuModal(event)">
   <div class="modal">
-    <h2>Request Interactive GPU Session</h2>
-    <div class="field">
-      <label>Partition</label>
-      <select id="modal-partition" onchange="updateSallocCmd()"></select>
-    </div>
+    <h2>Request GPU</h2>
+    <p id="modal-node-info" style="font-size:12px;color:var(--muted);margin-bottom:20px;font-family:monospace;"></p>
     <div class="field">
       <label>Number of GPUs</label>
-      <input type="number" id="modal-gpus" value="1" min="1" max="2" oninput="updateSallocCmd()">
+      <input type="number" id="modal-gpus" value="1" min="1" max="2">
     </div>
     <div class="field">
       <label>Duration (hours)</label>
-      <input type="number" id="modal-hours" value="2" min="0.5" max="6" step="0.5" oninput="updateSallocCmd()">
+      <input type="number" id="modal-hours" value="2" min="0.5" max="6" step="0.5">
     </div>
-    <p style="font-size:12px;color:var(--muted);margin-top:4px;">Run this command on the login node:</p>
-    <div class="salloc-box">
-      <code id="salloc-cmd"></code>
-      <button class="btn btn-xs" onclick="copySallocCmd()">Copy</button>
-    </div>
+    <div class="modal-result" id="modal-result" style="display:none;margin-top:12px;padding:12px 16px;border-radius:6px;font-size:13px;"></div>
     <div class="modal-actions">
-      <button class="btn" onclick="closeGpuModal()">Close</button>
+      <button class="btn" onclick="closeGpuModal()">Cancel</button>
+      <button class="btn primary" id="modal-submit-btn" onclick="submitGpuRequest()">Request</button>
     </div>
   </div>
 </div>
@@ -866,7 +844,7 @@ function buildStatusHTML(name, status, jobs) {
               </tr>
             </thead>
             <tbody id="node-tbody-${name}">
-              ${buildNodeRows(gpuNodes)}
+              ${buildNodeRows(gpuNodes, name)}
             </tbody>
           </table>
         </div>
@@ -939,7 +917,7 @@ function buildMyJobsHTML(name, jobs) {
     </div>`;
 }
 
-function buildNodeRows(nodes) {
+function buildNodeRows(nodes, clusterName) {
   return nodes.map(n => {
     const stateClass = `state-${n.state}`;
     const gpuStr = n.gpu_total > 0
@@ -947,7 +925,7 @@ function buildNodeRows(nodes) {
       : '<span style="color:var(--muted)">—</span>';
     const cpuPct = n.cpu_total > 0 ? Math.round((n.cpu_alloc / n.cpu_total) * 100) : 0;
     const partStr = n.partitions.join(', ');
-    _nodeStore[n.name] = { node: n.name, partitions: n.partitions, gpu_type: n.gpu_type, gpu_free: n.gpu_free };
+    _nodeStore[n.name] = { node: n.name, cluster: clusterName, partitions: n.partitions, gpu_type: n.gpu_type, gpu_free: n.gpu_free };
     const canRequest = n.gpu_free > 0 && n.state !== 'DOWN' && n.state !== 'DRAIN';
     const requestBtn = canRequest
       ? `<button class="btn btn-xs primary" onclick="openGpuModal('${escHtml(n.name)}')">Request</button>`
@@ -1011,22 +989,31 @@ function copyCmd(name) {
 
 // ── GPU Request Modal ──────────────────────────────────────────────────────
 let _modalNode = null;
+let _modalCluster = null;
 
 function openGpuModal(nodeName) {
   const nodeData = _nodeStore[nodeName];
   if (!nodeData) return;
   _modalNode = nodeData;
+  _modalCluster = nodeData.cluster;
 
-  const sel = document.getElementById('modal-partition');
   const gpuParts = nodeData.partitions.filter(p => p.toLowerCase().includes('gpu'));
-  const opts = (gpuParts.length ? gpuParts : nodeData.partitions);
-  sel.innerHTML = opts.map(p => `<option value="${escHtml(p)}">${escHtml(p)}</option>`).join('');
+  _modalNode._partition = (gpuParts.length ? gpuParts : nodeData.partitions)[0];
+
+  const gpuLabel = nodeData.gpu_type && nodeData.gpu_type !== 'none'
+    ? nodeData.gpu_type.toUpperCase() : 'GPU';
+  document.getElementById('modal-node-info').textContent =
+    `${nodeData.node}  ·  ${_modalNode._partition}  ·  ${gpuLabel}  ·  ${nodeData.gpu_free} free`;
 
   document.getElementById('modal-gpus').max = Math.min(nodeData.gpu_free, 2);
   document.getElementById('modal-gpus').value = 1;
   document.getElementById('modal-hours').value = 2;
 
-  updateSallocCmd();
+  const result = document.getElementById('modal-result');
+  result.style.display = 'none';
+  document.getElementById('modal-submit-btn').disabled = false;
+  document.getElementById('modal-submit-btn').textContent = 'Request';
+
   document.getElementById('gpu-modal-backdrop').classList.add('open');
 }
 
@@ -1034,33 +1021,43 @@ function closeGpuModal(e) {
   if (e && e.target !== document.getElementById('gpu-modal-backdrop')) return;
   document.getElementById('gpu-modal-backdrop').classList.remove('open');
   _modalNode = null;
+  _modalCluster = null;
 }
 
-function updateSallocCmd() {
-  if (!_modalNode) return;
-  const partition = document.getElementById('modal-partition').value;
+async function submitGpuRequest() {
+  if (!_modalNode || !_modalCluster) return;
   const gpus = parseInt(document.getElementById('modal-gpus').value, 10) || 1;
   const hours = parseFloat(document.getElementById('modal-hours').value) || 1;
 
-  const totalMin = Math.round(hours * 60);
-  const h = Math.floor(totalMin / 60);
-  const m = String(totalMin % 60).padStart(2, '0');
-  const timeStr = `${h}:${m}:00`;
+  const btn = document.getElementById('modal-submit-btn');
+  const result = document.getElementById('modal-result');
+  btn.disabled = true;
+  btn.textContent = 'Submitting…';
 
-  const gpuType = _modalNode.gpu_type && _modalNode.gpu_type !== 'none'
-    ? `gpu:${_modalNode.gpu_type}:${gpus}`
-    : `gpu:${gpus}`;
+  try {
+    const res = await fetch(`/api/clusters/${_modalCluster}/request-gpu`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        node: _modalNode.node,
+        partition: _modalNode._partition,
+        gpu_type: _modalNode.gpu_type || 'none',
+        gpus, hours,
+      }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || 'Request failed');
 
-  const cmd = `salloc -p ${partition} --gres=${gpuType} --nodelist=${_modalNode.node} -t ${timeStr}`;
-  document.getElementById('salloc-cmd').textContent = cmd;
-}
-
-function copySallocCmd() {
-  const cmd = document.getElementById('salloc-cmd').textContent;
-  navigator.clipboard.writeText(cmd).then(() => {
-    const btn = document.querySelector('.salloc-box .btn');
-    if (btn) { btn.textContent = 'Copied!'; setTimeout(() => btn.textContent = 'Copy', 1500); }
-  });
+    result.style.cssText = 'display:block;background:rgba(63,185,80,0.1);border:1px solid rgba(63,185,80,0.3);color:var(--green);';
+    result.textContent = `Job ${data.job_id} queued on ${data.node} for ${data.time}. Watch My Jobs — SSH in once it's RUNNING.`;
+    btn.textContent = 'Requested';
+    refreshCluster(_modalCluster);
+  } catch (e) {
+    result.style.cssText = 'display:block;background:rgba(248,81,73,0.1);border:1px solid rgba(248,81,73,0.3);color:var(--red);';
+    result.textContent = e.message;
+    btn.disabled = false;
+    btn.textContent = 'Request';
+  }
 }
 
 // ── Utilities ──────────────────────────────────────────────────────────────
