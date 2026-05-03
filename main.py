@@ -421,6 +421,22 @@ def api_request_gpu(cluster_name: str, body: GpuRequest):
     return {"job_id": job_id, "gpus": body.gpus, "time": time_str}
 
 
+@app.delete("/api/clusters/{cluster_name}/jobs/{job_id}")
+def api_cancel_job(cluster_name: str, job_id: str):
+    clusters = get_clusters()
+    if cluster_name not in clusters:
+        raise HTTPException(status_code=404, detail="Cluster not found")
+    cfg = clusters[cluster_name]
+    if not is_connected(cfg):
+        raise HTTPException(status_code=503, detail="Not connected")
+    if not re.fullmatch(r"\d+", job_id):
+        raise HTTPException(status_code=400, detail="Invalid job ID")
+    _, stderr, rc = run_remote(cfg, f"scancel {job_id}")
+    if rc != 0:
+        raise HTTPException(status_code=500, detail=stderr.strip() or "scancel failed")
+    return {"ok": True}
+
+
 @app.get("/api/clusters/{cluster_name}/disconnect")
 def api_disconnect(cluster_name: str):
     clusters = get_clusters()

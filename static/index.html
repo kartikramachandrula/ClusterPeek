@@ -891,6 +891,7 @@ function buildMyJobsHTML(name, jobs) {
               <th>Memory</th>
               <th>Time Limit</th>
               <th>Start / Reason</th>
+              <th></th>
             </tr>
           </thead>
           <tbody>
@@ -907,6 +908,7 @@ function buildMyJobsHTML(name, jobs) {
                 <td>${escHtml(j.mem)}</td>
                 <td>${escHtml(j.timelimit)}</td>
                 <td style="font-size:11px;color:var(--muted);">${escHtml(j.reason || j.start)}</td>
+                <td><button class="btn btn-xs danger" onclick="cancelJob('${escHtml(name)}','${escHtml(j.job_id)}',this)">Cancel</button></td>
               </tr>`).join('')}
           </tbody>
         </table>
@@ -1066,6 +1068,27 @@ async function submitGpuRequest() {
     result.textContent = e.message;
     btn.disabled = false;
     btn.textContent = 'Request';
+  }
+}
+
+async function cancelJob(clusterName, jobId, btn) {
+  if (!confirm(`Cancel job ${jobId}?`)) return;
+  btn.disabled = true;
+  btn.textContent = '…';
+  try {
+    const res = await fetch(`/api/clusters/${clusterName}/jobs/${jobId}`, { method: 'DELETE' });
+    if (!res.ok) {
+      const d = await res.json();
+      alert(d.detail || 'Cancel failed');
+      btn.disabled = false;
+      btn.textContent = 'Cancel';
+    } else {
+      refreshCluster(clusterName);
+    }
+  } catch (e) {
+    alert(e.message);
+    btn.disabled = false;
+    btn.textContent = 'Cancel';
   }
 }
 
