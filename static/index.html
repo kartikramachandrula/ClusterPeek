@@ -558,7 +558,7 @@
   <div class="header-right">
     <label class="toggle-wrap" id="auto-refresh-label">
       <div class="toggle on" id="auto-refresh-toggle"></div>
-      <span id="refresh-label">Auto-refresh (60s)</span>
+      Auto-refresh (60s)
     </label>
     <span id="last-updated">—</span>
     <button class="btn" onclick="refreshAll()">Refresh now</button>
@@ -600,8 +600,7 @@ let _nodeStore = {};
 let jobsCache = {};
 let autoRefresh = true;
 let refreshTimer = null;
-const REFRESH_INTERVAL_IDLE    = 60_000;
-const REFRESH_INTERVAL_PENDING = 10_000;
+const REFRESH_INTERVAL = 60_000;
 
 // ── Boot ───────────────────────────────────────────────────────────────────
 (async function init() {
@@ -620,17 +619,9 @@ function setupToggle() {
   });
 }
 
-function hasPendingJobs() {
-  return Object.values(jobsCache).some(jobs => jobs.some(j => j.state === 'PENDING'));
-}
-
 function scheduleRefresh() {
   clearTimeout(refreshTimer);
-  if (!autoRefresh) return;
-  const pending = hasPendingJobs();
-  const interval = pending ? REFRESH_INTERVAL_PENDING : REFRESH_INTERVAL_IDLE;
-  document.getElementById('refresh-label').textContent = pending ? 'Auto-refresh (10s)' : 'Auto-refresh (60s)';
-  refreshTimer = setTimeout(refreshAll, interval);
+  if (autoRefresh) refreshTimer = setTimeout(refreshAll, REFRESH_INTERVAL);
 }
 
 // ── Main refresh ───────────────────────────────────────────────────────────
@@ -695,10 +686,25 @@ function render() {
 function renderCluster(name) {
   const el = document.getElementById(`cluster-${name}`);
   if (!el) return;
+
+  const saved = {
+    state: document.getElementById(`filter-state-${name}`)?.value || '',
+    gpu:   document.getElementById(`filter-gpu-${name}`)?.value   || '',
+    part:  document.getElementById(`filter-part-${name}`)?.value  || '',
+    user:  document.getElementById(`filter-user-${name}`)?.value  || '',
+  };
+
   const meta = clusters[name];
   const status = statusCache[name] || {};
   const jobs = jobsCache[name] || [];
   el.innerHTML = buildClusterHTML(name, meta, status, jobs);
+
+  for (const [key, val] of Object.entries(saved)) {
+    if (!val) continue;
+    const el2 = document.getElementById(`filter-${key}-${name}`);
+    if (el2) el2.value = val;
+  }
+  if (Object.values(saved).some(v => v)) applyFilter(name);
 }
 
 function buildClusterHTML(name, meta, status, jobs) {
