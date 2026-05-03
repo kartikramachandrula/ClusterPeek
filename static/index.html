@@ -618,6 +618,7 @@
 // ── State ──────────────────────────────────────────────────────────────────
 let clusters = {};
 let statusCache = {};
+let _nodeStore = {};
 let jobsCache = {};
 let autoRefresh = true;
 let refreshTimer = null;
@@ -946,15 +947,10 @@ function buildNodeRows(nodes) {
       : '<span style="color:var(--muted)">—</span>';
     const cpuPct = n.cpu_total > 0 ? Math.round((n.cpu_alloc / n.cpu_total) * 100) : 0;
     const partStr = n.partitions.join(', ');
-    const nodeData = encodeURIComponent(JSON.stringify({
-      node: n.name,
-      partitions: n.partitions,
-      gpu_type: n.gpu_type,
-      gpu_free: n.gpu_free,
-    }));
+    _nodeStore[n.name] = { node: n.name, partitions: n.partitions, gpu_type: n.gpu_type, gpu_free: n.gpu_free };
     const canRequest = n.gpu_free > 0 && n.state !== 'DOWN' && n.state !== 'DRAIN';
     const requestBtn = canRequest
-      ? `<button class="btn btn-xs primary" onclick="openGpuModal(${nodeData})">Request</button>`
+      ? `<button class="btn btn-xs primary" onclick="openGpuModal('${escHtml(n.name)}')">Request</button>`
       : `<span style="color:var(--muted);font-size:11px;">—</span>`;
 
     return `<tr
@@ -1016,7 +1012,9 @@ function copyCmd(name) {
 // ── GPU Request Modal ──────────────────────────────────────────────────────
 let _modalNode = null;
 
-function openGpuModal(nodeData) {
+function openGpuModal(nodeName) {
+  const nodeData = _nodeStore[nodeName];
+  if (!nodeData) return;
   _modalNode = nodeData;
 
   const sel = document.getElementById('modal-partition');
