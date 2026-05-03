@@ -598,6 +598,7 @@ let clusters = {};
 let statusCache = {};
 let _nodeStore = {};
 let jobsCache = {};
+let jobsFetchedAt = {};
 let autoRefresh = true;
 let refreshTimer = null;
 const REFRESH_INTERVAL = 60_000;
@@ -643,7 +644,7 @@ async function refreshAll() {
       .catch(e => { statusCache[name] = { connected: false, error: String(e) }; }),
     fetch(`/api/clusters/${name}/myjobs`)
       .then(r => r.ok ? r.json() : [])
-      .then(data => { jobsCache[name] = data; })
+      .then(data => { jobsCache[name] = data; jobsFetchedAt[name] = Date.now(); })
       .catch(() => { jobsCache[name] = []; }),
   ]);
   await Promise.all(fetches);
@@ -662,7 +663,7 @@ async function refreshCluster(name) {
       .catch(e => { statusCache[name] = { connected: false, error: String(e) }; }),
     fetch(`/api/clusters/${name}/myjobs`)
       .then(r => r.ok ? r.json() : [])
-      .then(data => { jobsCache[name] = data; })
+      .then(data => { jobsCache[name] = data; jobsFetchedAt[name] = Date.now(); })
       .catch(() => { jobsCache[name] = []; }),
   ]);
   renderCluster(name);
@@ -867,12 +868,12 @@ function buildStatusHTML(name, status, jobs) {
   }
 
   // My Jobs table
-  html += buildMyJobsHTML(name, jobs);
+  html += buildMyJobsHTML(name, jobs, jobsFetchedAt[name] || Date.now());
 
   return html;
 }
 
-function buildMyJobsHTML(name, jobs) {
+function buildMyJobsHTML(name, jobs, fetchedAt) {
   const totalGpus = jobs.reduce((s, j) => s + j.gpus, 0);
   const running   = jobs.filter(j => j.state === 'RUNNING').length;
   const pending   = jobs.filter(j => j.state === 'PENDING').length;
@@ -913,7 +914,11 @@ function buildMyJobsHTML(name, jobs) {
                 <td>${j.gpu_type ? escHtml(j.gpu_type.toUpperCase()) : '<span style="color:var(--muted)">—</span>'}</td>
                 <td>${escHtml(j.cpus)}</td>
                 <td>${escHtml(j.mem)}</td>
-                <td style="color:${j.state === 'RUNNING' ? 'var(--green)' : 'var(--muted)'};">${escHtml(j.timeleft || '—')}</td>
+                <td style="color:${j.state === 'RUNNING' ? 'var(--green)' : 'var(--muted)'};">
+                  ${j.state === 'RUNNING' && j.timeleft
+                    ? `<span class="timeleft-live" data-sec="${parseSlurTime(j.timeleft)}" data-fetched="${fetchedAt}">${escHtml(j.timeleft)}</span>`
+                    : escHtml(j.timeleft || '—')}
+                </td>
                 <td style="color:var(--muted);">${escHtml(j.timelimit)}</td>
                 <td style="font-size:11px;color:var(--muted);">${escHtml(j.reason || j.start)}</td>
                 <td><button class="btn btn-xs danger" onclick="cancelJob('${escHtml(name)}','${escHtml(j.job_id)}',this)">Cancel</button></td>
@@ -1099,6 +1104,37 @@ async function cancelJob(clusterName, jobId, btn) {
     btn.textContent = 'Cancel';
   }
 }
+
+// ── Time left countdown ────────────────────────────────────────────────────
+function parseSlurTime(s) {
+  if (!s || s === 'UNLIMITED' || s === 'NOT_SET' || s === 'INVALID' || s === 'N/A') return null;
+  let days = 0;
+  if (s.includes('-')) { const [d, r] = s.split('-'); days = parseInt(d, 10); s = r; }
+  const parts = s.split(':').map(Number);
+  const secs = parts.length === 3 ? parts[0]*3600 + parts[1]*60 + parts[2]
+             : parts.length === 2 ? parts[0]*60 + parts[1]
+             : parts[0];
+  return days * 86400 + secs;
+}
+
+function formatSlurTime(sec) {
+  if (sec <= 0) return '0:00:00';
+  const h = Math.floor(sec / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  const s = sec % 60;
+  return `${h}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+}
+
+setInterval(() => {
+  const now = Date.now();
+  document.querySelectorAll('.timeleft-live').forEach(el => {
+    const initial = parseFloat(el.dataset.sec);
+    const fetched = parseFloat(el.dataset.fetched);
+    if (!initial || !fetched) return;
+    const remaining = Math.max(0, initial - (now - fetched) / 1000);
+    el.textContent = formatSlurTime(Math.round(remaining));
+  });
+}, 1000);
 
 // ── Utilities ──────────────────────────────────────────────────────────────
 function escHtml(s) {
