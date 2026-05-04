@@ -576,18 +576,38 @@
   <div class="modal">
     <h2>Request GPU</h2>
     <p id="modal-node-info" style="font-size:12px;color:var(--muted);margin-bottom:20px;font-family:monospace;"></p>
-    <div class="field">
-      <label>Number of GPUs</label>
-      <input type="number" id="modal-gpus" value="1" min="1" max="2">
+    <div id="modal-form">
+      <div class="field">
+        <label>Number of GPUs</label>
+        <input type="number" id="modal-gpus" value="1" min="1" max="2">
+      </div>
+      <div class="field">
+        <label>Duration (hours)</label>
+        <input type="number" id="modal-hours" value="2" min="0.5" max="6" step="0.5">
+      </div>
+      <div class="field">
+        <label>Memory (GB)</label>
+        <input type="number" id="modal-mem" value="32" min="1" step="1">
+      </div>
+      <div class="modal-result" id="modal-error" style="display:none;margin-top:12px;padding:12px 16px;border-radius:6px;font-size:13px;background:rgba(248,81,73,0.1);border:1px solid rgba(248,81,73,0.3);color:var(--red);"></div>
+      <div class="modal-actions">
+        <button class="btn" onclick="closeGpuModal()">Cancel</button>
+        <button class="btn primary" id="modal-submit-btn" onclick="submitGpuRequest()">Request</button>
+      </div>
     </div>
-    <div class="field">
-      <label>Duration (hours)</label>
-      <input type="number" id="modal-hours" value="2" min="0.5" max="6" step="0.5">
-    </div>
-    <div class="modal-result" id="modal-result" style="display:none;margin-top:12px;padding:12px 16px;border-radius:6px;font-size:13px;"></div>
-    <div class="modal-actions">
-      <button class="btn" onclick="closeGpuModal()">Cancel</button>
-      <button class="btn primary" id="modal-submit-btn" onclick="submitGpuRequest()">Request</button>
+    <div id="modal-success" style="display:none;">
+      <div style="text-align:center;padding:8px 0 20px;">
+        <div style="font-size:32px;margin-bottom:12px;">✓</div>
+        <div style="font-size:18px;font-weight:700;color:var(--green);margin-bottom:6px;">Job Queued</div>
+        <div id="modal-success-jobid" style="font-size:13px;color:var(--muted);margin-bottom:20px;"></div>
+        <div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:16px;text-align:left;font-size:12px;line-height:1.8;">
+          <div id="modal-success-details"></div>
+        </div>
+        <p style="margin-top:16px;font-size:12px;color:var(--muted);">Watch <strong style="color:var(--text);">My Jobs</strong> — SSH into the node once it shows <span style="color:var(--green);font-weight:600;">RUNNING</span>.</p>
+      </div>
+      <div class="modal-actions" style="justify-content:center;">
+        <button class="btn primary" onclick="closeGpuModal()">Done</button>
+      </div>
     </div>
   </div>
 </div>
@@ -949,7 +969,7 @@ function buildNodeRows(nodes, clusterName) {
       : '<span style="color:var(--muted)">—</span>';
     const cpuPct = n.cpu_total > 0 ? Math.round((n.cpu_alloc / n.cpu_total) * 100) : 0;
     const partStr = n.partitions.join(', ');
-    _nodeStore[n.name] = { node: n.name, cluster: clusterName, partitions: n.partitions, gpu_type: n.gpu_type, gpu_free: n.gpu_free };
+    _nodeStore[n.name] = { node: n.name, cluster: clusterName, partitions: n.partitions, gpu_type: n.gpu_type, gpu_free: n.gpu_free, mem_gb: n.mem_gb || 0 };
     const canRequest = n.gpu_free > 0 && n.state !== 'DOWN' && n.state !== 'DRAIN';
     const requestBtn = canRequest
       ? `<button class="btn btn-xs primary" onclick="openGpuModal('${escHtml(n.name)}')">Request</button>`
@@ -1032,9 +1052,13 @@ function openGpuModal(nodeName) {
   document.getElementById('modal-gpus').max = Math.min(nodeData.gpu_free, 2);
   document.getElementById('modal-gpus').value = 1;
   document.getElementById('modal-hours').value = 2;
+  const memInput = document.getElementById('modal-mem');
+  if (nodeData.mem_gb > 0) { memInput.value = nodeData.mem_gb; memInput.max = nodeData.mem_gb; }
+  else { memInput.value = 32; memInput.removeAttribute('max'); }
 
-  const result = document.getElementById('modal-result');
-  result.style.display = 'none';
+  document.getElementById('modal-error').style.display = 'none';
+  document.getElementById('modal-form').style.display = 'block';
+  document.getElementById('modal-success').style.display = 'none';
   document.getElementById('modal-submit-btn').disabled = false;
   document.getElementById('modal-submit-btn').textContent = 'Request';
 
@@ -1050,13 +1074,15 @@ function closeGpuModal(e) {
 
 async function submitGpuRequest() {
   if (!_modalNode || !_modalCluster) return;
-  const gpus = parseInt(document.getElementById('modal-gpus').value, 10) || 1;
+  const gpus  = parseInt(document.getElementById('modal-gpus').value, 10) || 1;
   const hours = parseFloat(document.getElementById('modal-hours').value) || 1;
+  const memGb = parseInt(document.getElementById('modal-mem').value, 10) || 32;
 
   const btn = document.getElementById('modal-submit-btn');
-  const result = document.getElementById('modal-result');
+  const errBox = document.getElementById('modal-error');
   btn.disabled = true;
   btn.textContent = 'Submitting…';
+  errBox.style.display = 'none';
 
   try {
     const res = await fetch(`/api/clusters/${_modalCluster}/request-gpu`, {
@@ -1066,19 +1092,28 @@ async function submitGpuRequest() {
         node: _modalNode.node,
         partition: _modalNode._partition,
         gpu_type: _modalNode.gpu_type || 'none',
-        gpus, hours,
+        gpus, hours, mem_gb: memGb,
       }),
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.detail || 'Request failed');
 
-    result.style.cssText = 'display:block;background:rgba(63,185,80,0.1);border:1px solid rgba(63,185,80,0.3);color:var(--green);';
-    result.textContent = `Job ${data.job_id} queued on ${data.node} for ${data.time}. Watch My Jobs — SSH in once it's RUNNING.`;
-    btn.textContent = 'Requested';
+    const gpuLabel = _modalNode.gpu_type && _modalNode.gpu_type !== 'none'
+      ? _modalNode.gpu_type.toUpperCase() : 'GPU';
+    document.getElementById('modal-success-jobid').textContent = `Job ID: ${data.job_id}`;
+    document.getElementById('modal-success-details').innerHTML = [
+      `<div><span style="color:var(--muted)">Partition</span> &nbsp;<strong>${escHtml(_modalNode._partition)}</strong></div>`,
+      `<div><span style="color:var(--muted)">GPU</span> &nbsp;<strong>${gpus}× ${gpuLabel}</strong></div>`,
+      `<div><span style="color:var(--muted)">Memory</span> &nbsp;<strong>${memGb} GB</strong></div>`,
+      `<div><span style="color:var(--muted)">Duration</span> &nbsp;<strong>${escHtml(data.time)}</strong></div>`,
+    ].join('');
+
+    document.getElementById('modal-form').style.display = 'none';
+    document.getElementById('modal-success').style.display = 'block';
     refreshCluster(_modalCluster);
   } catch (e) {
-    result.style.cssText = 'display:block;background:rgba(248,81,73,0.1);border:1px solid rgba(248,81,73,0.3);color:var(--red);';
-    result.textContent = e.message;
+    errBox.textContent = e.message;
+    errBox.style.display = 'block';
     btn.disabled = false;
     btn.textContent = 'Request';
   }

@@ -117,8 +117,8 @@ def _normalize_state(state_raw: str) -> str:
 # versions (e.g. omitting the GPU type label). sinfo --Format with explicit
 # column widths gives us a byte-exact layout we can slice without ambiguity.
 
-_SINFO_WIDTHS = [30, 30, 60, 60, 20, 20]  # node, partition, gres, gresused, state, cpus
-_SINFO_FIELDS = ["nodelist", "partition", "gres", "gresused", "statelong", "cpusstate"]
+_SINFO_WIDTHS = [30, 30, 60, 60, 20, 20, 12]  # node, partition, gres, gresused, state, cpus, memory
+_SINFO_FIELDS = ["nodelist", "partition", "gres", "gresused", "statelong", "cpusstate", "memory"]
 _SINFO_FORMAT = ",".join(f"{f}:{w}" for f, w in zip(_SINFO_FIELDS, _SINFO_WIDTHS))
 
 # Pre-compute cumulative offsets
@@ -132,7 +132,7 @@ def _parse_sinfo_line(line: str) -> dict | None:
     line = line.ljust(_SINFO_LINE_LEN)
     slices = [line[_SINFO_OFFSETS[i]:_SINFO_OFFSETS[i+1]].strip()
               for i in range(len(_SINFO_WIDTHS))]
-    node_name, partition, gres, gres_used, state_raw, cpus_str = slices
+    node_name, partition, gres, gres_used, state_raw, cpus_str, mem_str = slices
 
     if not node_name:
         return None
@@ -140,6 +140,7 @@ def _parse_sinfo_line(line: str) -> dict | None:
     gpu_type, gpu_total = _parse_gres(gres)
     _, gpu_used = _parse_gres(gres_used)
     cpu = _parse_cpu_state(cpus_str)
+    mem_mb = int(mem_str) if mem_str.isdigit() else 0
 
     return {
         "name":      node_name,
@@ -153,6 +154,7 @@ def _parse_sinfo_line(line: str) -> dict | None:
         "cpu_total": cpu["total"],
         "cpu_alloc": cpu["allocated"],
         "cpu_idle":  cpu["idle"],
+        "mem_gb":    mem_mb // 1024,
     }
 
 
@@ -388,6 +390,7 @@ class GpuRequest(BaseModel):
     gpu_type: str
     gpus: int = 1
     hours: float = 1.0
+    mem_gb: int = 32
 
 
 def _hours_to_slurm_time(hours: float) -> str:
@@ -411,7 +414,8 @@ def api_request_gpu(cluster_name: str, body: GpuRequest):
     gres = f"gpu:{body.gpu_type}:{body.gpus}" if body.gpu_type and body.gpu_type != "none" else f"gpu:{body.gpus}"
     cmd = (
         f"sbatch --partition={body.partition} --gres={gres} "
-        f"--time={time_str} --output=/dev/null --error=/dev/null "
+        f"--time={time_str} --mem={body.mem_gb}G "
+        f"--output=/dev/null --error=/dev/null "
         f"--job-name=interactive --wrap='sleep {sleep_sec}'"
     )
     stdout, stderr, rc = run_remote(cfg, cmd)
